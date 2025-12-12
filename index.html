@@ -1,630 +1,610 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Quant Pack – Single Flow</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
-  <style>
-    body { background:#0f172a; color:#e2e8f0; }
-    .card { background: rgba(30,41,59,0.6); border:1px solid #334155; border-radius: 16px; }
-    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
-    .spinner { border:3px solid rgba(255,255,255,0.15); border-top-color:#60a5fa; border-radius:999px; width:18px; height:18px; animation: spin 1s linear infinite; }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    .badge { display:inline-flex; align-items:center; gap:.5rem; padding:.35rem .6rem; border-radius:999px; font-weight:700; border:1px solid #334155; }
-  </style>
-</head>
+import React, { useState, useEffect, useMemo } from 'react';
+import { 
+  LineChart, Line, BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid, 
+  Tooltip, Legend, ResponsiveContainer, ComposedChart, ReferenceLine, Scatter 
+} from 'recharts';
+import { 
+  Search, Activity, TrendingUp, AlertTriangle, Shield, 
+  ArrowRight, Layers, BarChart2, GitBranch, Cpu 
+} from 'lucide-react';
 
-<body class="min-h-screen">
-  <div class="max-w-6xl mx-auto p-6 md:p-10">
-    <header class="mb-8">
-      <h1 class="text-3xl font-bold">Quant Pack – Single Flow</h1>
-      <p class="text-slate-400 mt-2">Decision → Regime (HMM) → Stage → Hedge Signal (with data-source fallbacks)</p>
-    </header>
+// --- MATH & INDICATOR UTILITIES ---
 
-    <div class="card p-5 mb-6">
-      <form id="form" class="flex flex-col md:flex-row gap-3 md:items-end">
-        <div class="flex-1">
-          <label class="text-sm text-slate-300">Ticker</label>
-          <input id="ticker" class="w-full mt-1 bg-slate-900 border border-slate-700 rounded-lg px-4 py-3 uppercase tracking-wider font-semibold"
-                 placeholder="e.g., AAPL, NVDA, SHOP.TO, RY.TO" value="NVDA"/>
-        </div>
-        <div class="w-full md:w-60">
-          <label class="text-sm text-slate-300">Market (optional)</label>
-          <select id="market" class="w-full mt-1 bg-slate-900 border border-slate-700 rounded-lg px-4 py-3 font-semibold">
-            <option value="">Auto</option>
-            <option value=".TO">Canada (TSX) .TO</option>
-            <option value=".V">Canada (TSX-V) .V</option>
-            <option value=".NE">Canada (NEO) .NE</option>
-            <option value=".CN">Canada (CSE) .CN</option>
-          </select>
-        </div>
-        <button id="runBtn" type="submit"
-          class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-6 py-3 rounded-lg flex items-center justify-center gap-2">
-          <span id="runText">Run Full Quant Pack</span>
-          <span id="runSpin" class="spinner hidden"></span>
-        </button>
-      </form>
-
-      <div class="mt-4 text-xs text-slate-400 mono">
-        <div>Data fallback: MarketStack → FMP → Finnhub → AlphaVantage → Yahoo Finance</div>
-        <div id="dataSourceLine">Source: —</div>
-      </div>
-
-      <div id="errorBox" class="hidden mt-4 p-3 rounded-lg border border-red-700 bg-red-900/40 text-red-200 text-sm"></div>
-    </div>
-
-    <!-- Result badges -->
-    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-      <div class="card p-4">
-        <div class="text-xs text-slate-400 uppercase font-semibold mb-2">1) Decision (ROC)</div>
-        <div id="decisionBadge" class="badge bg-slate-900/40 text-slate-200">—</div>
-        <div id="decisionDetail" class="text-sm text-slate-300 mt-3"></div>
-      </div>
-
-      <div class="card p-4">
-        <div class="text-xs text-slate-400 uppercase font-semibold mb-2">2) Regime (HMM)</div>
-        <div id="hmmBadge" class="badge bg-slate-900/40 text-slate-200">—</div>
-        <div id="hmmDetail" class="text-sm text-slate-300 mt-3"></div>
-      </div>
-
-      <div class="card p-4">
-        <div class="text-xs text-slate-400 uppercase font-semibold mb-2">3) Stage (Weinstein)</div>
-        <div id="stageBadge" class="badge bg-slate-900/40 text-slate-200">—</div>
-        <div id="stageDetail" class="text-sm text-slate-300 mt-3"></div>
-      </div>
-
-      <div class="card p-4">
-        <div class="text-xs text-slate-400 uppercase font-semibold mb-2">4) Hedge Signal</div>
-        <div id="hedgeBadge" class="badge bg-slate-900/40 text-slate-200">—</div>
-        <div id="hedgeDetail" class="text-sm text-slate-300 mt-3"></div>
-      </div>
-    </div>
-
-    <!-- Charts -->
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      <div class="card p-4 lg:col-span-2">
-        <div class="text-sm font-semibold mb-3">Price + 50 SMA + Signals</div>
-        <div class="h-[380px]"><canvas id="priceChart"></canvas></div>
-      </div>
-      <div class="card p-4">
-        <div class="text-sm font-semibold mb-3">Regime Volatility (20d)</div>
-        <div class="h-[380px]"><canvas id="volChart"></canvas></div>
-      </div>
-    </div>
-
-    <footer class="mt-10 text-xs text-slate-500">
-      Educational only. Not financial advice.
-    </footer>
-  </div>
-
-<script>
-/** =========================
- *  Config (from your spec)
- *  ========================= */
-const KEYS = {
-  FMP: "zZ5zECyopZEcPtKvkqlb1R52jv2vFusj",
-  FINNHUB: "d22igc9r01qr7ajlkob0d22igc9r01qr7ajlkobg",
-  ALPHAVANTAGE: "JQQUUJQRAX8TLXSM",
-  MARKETSTACK: "adc91e9b5f1decaabf6d74dc20a4416f"
+const calculateSMA = (data, window) => {
+  if (!data || data.length < window) return null;
+  const smaData = data.map((item, index) => {
+    if (index < window - 1) return { ...item, sma: null };
+    const slice = data.slice(index - window + 1, index + 1);
+    const sum = slice.reduce((acc, curr) => acc + (curr.close || 0), 0);
+    return { ...item, sma: sum / window };
+  });
+  return smaData;
 };
 
-// Your analysis services
-const SERVICES = {
-  ROC: "https://druckenmiller-2nd-order-roc.onrender.com",
-  HMM: "https://hidden-markov-model-for-stocks.onrender.com",
-  STAGE: "https://stage-analyzer.onrender.com",
-  HEDGE: "https://hdgsignal.onrender.com"
+const calculateEMA = (data, window) => {
+  if (!data || data.length < window) return [];
+  const k = 2 / (window + 1);
+  let emaData = [...data];
+  // Start with SMA
+  const firstSMA = data.slice(0, window).reduce((acc, curr) => acc + curr.close, 0) / window;
+  emaData[window - 1] = { ...emaData[window - 1], ema: firstSMA };
+  
+  for (let i = window; i < data.length; i++) {
+    const prevEma = emaData[i - 1].ema !== undefined ? emaData[i - 1].ema : emaData[i - 1].close;
+    const currentEma = (data[i].close * k) + (prevEma * (1 - k));
+    emaData[i] = { ...emaData[i], ema: currentEma };
+  }
+  return emaData;
 };
 
-// UI handles
-const el = (id) => document.getElementById(id);
-const errorBox = el("errorBox");
-const dataSourceLine = el("dataSourceLine");
+const calculateStdDev = (data, window, key = 'close') => {
+  return data.map((item, index) => {
+    if (index < window - 1) return { ...item, stdDev: null };
+    const slice = data.slice(index - window + 1, index + 1);
+    const mean = slice.reduce((acc, curr) => acc + curr[key], 0) / window;
+    const variance = slice.reduce((acc, curr) => acc + Math.pow(curr[key] - mean, 2), 0) / window;
+    return { ...item, stdDev: Math.sqrt(variance) };
+  });
+};
 
-const decisionBadge = el("decisionBadge");
-const decisionDetail = el("decisionDetail");
-const hmmBadge = el("hmmBadge");
-const hmmDetail = el("hmmDetail");
-const stageBadge = el("stageBadge");
-const stageDetail = el("stageDetail");
-const hedgeBadge = el("hedgeBadge");
-const hedgeDetail = el("hedgeDetail");
+const calculateRSI = (data, window = 14) => {
+  let gains = 0;
+  let losses = 0;
+  const rsiData = [...data];
 
-// charts
-let priceChart, volChart;
-
-function setLoading(isLoading) {
-  el("runText").textContent = isLoading ? "Running..." : "Run Full Quant Pack";
-  el("runSpin").classList.toggle("hidden", !isLoading);
-  el("runBtn").disabled = isLoading;
-  el("runBtn").classList.toggle("opacity-60", isLoading);
-}
-function showError(msg) {
-  errorBox.textContent = msg;
-  errorBox.classList.remove("hidden");
-}
-function hideError() {
-  errorBox.classList.add("hidden");
-  errorBox.textContent = "";
-}
-function setBadge(target, text, tone="neutral") {
-  target.textContent = text;
-  target.className = "badge";
-  const base = "border";
-  if (tone === "good") target.classList.add("bg-green-900/30","text-green-300","border-green-700");
-  else if (tone === "bad") target.classList.add("bg-red-900/30","text-red-300","border-red-700");
-  else if (tone === "warn") target.classList.add("bg-yellow-900/30","text-yellow-200","border-yellow-700");
-  else target.classList.add("bg-slate-900/40","text-slate-200","border-slate-700");
-}
-
-/** =========================
- *  Helpers: ticker/market
- *  ========================= */
-function normalizeSymbol(rawTicker, marketSuffix) {
-  let sym = (rawTicker || "").trim().toUpperCase();
-  if (!sym) return "";
-  if (marketSuffix && !sym.endsWith(marketSuffix)) {
-    sym = sym.replace(/\.TO$|\.V$|\.CN$|\.NE$/g, "");
-    sym += marketSuffix;
+  // First Avg Gain/Loss
+  for (let i = 1; i <= window; i++) {
+    const change = data[i].close - data[i - 1].close;
+    if (change > 0) gains += change;
+    else losses += Math.abs(change);
   }
-  return sym;
-}
+  
+  let avgGain = gains / window;
+  let avgLoss = losses / window;
 
-/** =========================
- *  Market data fetch layer
- *  (taken from PDF patterns)
- *  ========================= */
-async function fetchMarketstack(ticker) {
-  const url = `https://api.marketstack.com/v1/eod?access_key=${KEYS.MARKETSTACK}&symbols=${encodeURIComponent(ticker)}&limit=260`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Marketstack HTTP ${res.status}`);
-  const json = await res.json();
-  if (!json.data || !json.data.length) throw new Error("Marketstack: no data");
-  return json.data.reverse().map(d => ({ date: d.date.split("T")[0], close: d.close, volume: d.volume ?? null }));
-}
-async function fetchFMP(ticker) {
-  const url = `https://financialmodelingprep.com/api/v3/historical-price-full/${encodeURIComponent(ticker)}?apikey=${KEYS.FMP}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`FMP HTTP ${res.status}`);
-  const json = await res.json();
-  if (!json.historical || !json.historical.length) throw new Error("FMP: no data");
-  const hist = json.historical.slice(0, 260).reverse();
-  return hist.map(d => ({ date: d.date, close: d.close, volume: d.volume ?? null }));
-}
-async function fetchFinnhub(ticker) {
-  // Finnhub candle: count param is supported in some environments; if it fails, throw and fallback.
-  const url = `https://finnhub.io/api/v1/stock/candle?symbol=${encodeURIComponent(ticker)}&resolution=D&count=260&token=${KEYS.FINNHUB}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Finnhub HTTP ${res.status}`);
-  const json = await res.json();
-  if (json.s !== "ok" || !json.c || !json.c.length) throw new Error("Finnhub: no data");
-  return json.c.map((close, i) => ({
-    date: new Date(json.t[i] * 1000).toISOString().split("T")[0],
-    close,
-    volume: (json.v && json.v[i] != null) ? json.v[i] : null
-  }));
-}
-async function fetchAlphaVantage(ticker) {
-  const url = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${encodeURIComponent(ticker)}&apikey=${KEYS.ALPHAVANTAGE}&outputsize=compact`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`AlphaVantage HTTP ${res.status}`);
-  const json = await res.json();
-  const ts = json["Time Series (Daily)"];
-  if (!ts) throw new Error(json["Note"] || "AlphaVantage: no time series (rate limit?)");
-  const dates = Object.keys(ts).sort();
-  const recent = dates.slice(-260);
-  return recent.map(d => ({ date: d, close: parseFloat(ts[d]["4. close"]), volume: parseFloat(ts[d]["5. volume"]) }));
-}
-async function fetchYahoo(ticker) {
-  // NOTE: yahoo chart endpoint needs CORS handling; this uses allorigins as in the PDF’s Stage tool.
-  const queryUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=1y`;
-  const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(queryUrl)}`;
-  const res = await fetch(proxyUrl);
-  if (!res.ok) throw new Error(`Yahoo proxy HTTP ${res.status}`);
-  const json = await res.json();
-  const r = json?.chart?.result?.[0];
-  const quote = r?.indicators?.quote?.[0];
-  if (!r?.timestamp?.length || !quote?.close?.length) throw new Error("Yahoo: incomplete data");
-  return r.timestamp.map((ts, i) => ({
-    date: new Date(ts*1000).toISOString().split("T")[0],
-    close: quote.close[i],
-    volume: quote.volume ? quote.volume[i] : null
-  })).filter(d => d.close != null);
-}
-
-async function fetchStockDataWithFallback(ticker) {
-  const errors = [];
-  try { return { source:"Marketstack", data: await fetchMarketstack(ticker) }; } catch(e){ errors.push(e.message); }
-  try { return { source:"FMP", data: await fetchFMP(ticker) }; } catch(e){ errors.push(e.message); }
-  try { return { source:"Finnhub", data: await fetchFinnhub(ticker) }; } catch(e){ errors.push(e.message); }
-  try { return { source:"AlphaVantage", data: await fetchAlphaVantage(ticker) }; } catch(e){ errors.push(e.message); }
-  try { return { source:"Yahoo Finance", data: await fetchYahoo(ticker) }; } catch(e){ errors.push(e.message); }
-  throw new Error("All data sources failed: " + errors.join(" | "));
-}
-
-/** =========================
- *  Stage logic (Weinstein)
- *  (from PDF Stage tool)
- *  ========================= */
-function calculateSMA(rows, window) {
-  const out = [];
-  for (let i=0;i<rows.length;i++){
-    if (i < window-1) { out.push({ ...rows[i], sma:null }); continue; }
-    const slice = rows.slice(i-window+1, i+1);
-    const sum = slice.reduce((a,c)=>a+(c.close||0),0);
-    out.push({ ...rows[i], sma: sum/window });
+  for (let i = window + 1; i < data.length; i++) {
+    const change = data[i].close - data[i - 1].close;
+    const gain = change > 0 ? change : 0;
+    const loss = change < 0 ? Math.abs(change) : 0;
+    
+    avgGain = ((avgGain * (window - 1)) + gain) / window;
+    avgLoss = ((avgLoss * (window - 1)) + loss) / window;
+    
+    const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+    const rsi = 100 - (100 / (1 + rs));
+    rsiData[i] = { ...rsiData[i], rsi };
   }
-  return out;
-}
-function analyzeStage(currentPrice, currentMA, prevMA) {
-  if (!currentMA || !prevMA) return { stage:0, label:"Insufficient Data", tone:"neutral" };
-  const maSlope = (currentMA - prevMA) / prevMA;
-  const priceVsMA = (currentPrice - currentMA) / currentMA;
-  const slopeThreshold = 0.0005;
+  return rsiData;
+};
 
-  if (maSlope > slopeThreshold && priceVsMA > -0.02) return { stage:2, label:"Stage 2: Markup (Uptrend)", tone:"good" };
-  if (maSlope < -slopeThreshold && priceVsMA < 0.02) return { stage:4, label:"Stage 4: Markdown (Downtrend)", tone:"bad" };
-  if (priceVsMA < 0) return { stage:1, label:"Stage 1: Basing (Accumulation)", tone:"warn" };
-  return { stage:3, label:"Stage 3: Topping (Distribution)", tone:"warn" };
-}
+// --- DATA FETCHING (Robust Proxy with Fallback) ---
 
-/** =========================
- *  HMM-style regime fallback
- *  (from PDF HMM tool: vol buckets)
- *  ========================= */
-function processReturns(rows) {
-  const prices = rows.map(r => r.close).filter(v => typeof v === "number" && v > 0);
-  const dates = rows.map(r => r.date);
-  const returns = [];
-  for (let i=1;i<prices.length;i++) returns.push(Math.log(prices[i]/prices[i-1]));
-  return { prices: prices.slice(1), dates: dates.slice(1), returns };
-}
-function determineRegimeFallback(proc) {
-  const returns = proc.returns;
-  const windowSize = 20;
-  const vols = [];
-  for (let i=0;i<=returns.length-windowSize;i++){
-    const slice = returns.slice(i, i+windowSize);
-    const mean = slice.reduce((a,b)=>a+b,0)/windowSize;
-    const variance = slice.reduce((a,b)=>a+Math.pow(b-mean,2),0)/windowSize;
-    vols.push(Math.sqrt(variance));
-  }
-  if (!vols.length) throw new Error("Insufficient data for volatility.");
-  const currentVol = vols[vols.length-1];
-  const currentPrice = proc.prices[proc.prices.length-1];
-  const ma20 = proc.prices.slice(-20).reduce((a,b)=>a+b,0)/20;
-  const trend = currentPrice > ma20 ? "UP" : "DOWN";
-
-  const sorted = [...vols].sort((a,b)=>a-b);
-  const lowT = sorted[Math.floor(sorted.length*0.33)];
-  const highT = sorted[Math.floor(sorted.length*0.66)];
-
-  let regime=2, name="Mid Volatility (State 2)", tone="warn";
-  if (currentVol <= lowT) { regime=1; name="Low Volatility (State 1)"; tone="good"; }
-  else if (currentVol >= highT) { regime=3; name="High Volatility (State 3)"; tone="bad"; }
-
-  return { regime, name, tone, currentVol, lowT, highT, vols, trend };
-}
-
-/** =========================
- *  Hedge-signal fallback
- *  (simplified “3-out-of-5”)
- *  ========================= */
-function sma(arr, n) {
-  if (arr.length < n) return null;
-  const slice = arr.slice(-n);
-  return slice.reduce((a,b)=>a+b,0)/n;
-}
-function stdev(arr, n) {
-  if (arr.length < n) return null;
-  const slice = arr.slice(-n);
-  const m = sma(slice, n);
-  const v = slice.reduce((a,b)=>a+Math.pow(b-m,2),0)/n;
-  return Math.sqrt(v);
-}
-function emaFull(values, period) {
-  if (values.length < period) return null;
-  const k = 2/(period+1);
-  let e = values.slice(0, period).reduce((a,b)=>a+b,0)/period;
-  for (let i=period;i<values.length;i++) e = values[i]*k + e*(1-k);
-  return e;
-}
-function computeHedgeComposite(rows) {
-  const closes = rows.map(r=>r.close).filter(x=>typeof x==="number");
-  const vols = rows.map(r=>r.volume).filter(x=>typeof x==="number");
-  if (closes.length < 60) throw new Error("Need >= 60 data points for hedge composite.");
-
-  // RSI(18)
-  const rsiPeriod = 18;
-  let gain=0, loss=0;
-  for (let i=1;i<rsiPeriod;i++){
-    const ch = closes[i]-closes[i-1];
-    if (ch>0) gain += ch; else loss -= ch;
-  }
-  gain/=rsiPeriod; loss/=rsiPeriod;
-  for (let i=rsiPeriod;i<closes.length;i++){
-    const ch = closes[i]-closes[i-1];
-    const g = ch>0?ch:0;
-    const l = ch<0?-ch:0;
-    gain = (gain*(rsiPeriod-1)+g)/rsiPeriod;
-    loss = (loss*(rsiPeriod-1)+l)/rsiPeriod;
-  }
-  const rs = loss === 0 ? 999 : (gain/loss);
-  const rsi = 100 - (100/(1+rs));
-  const rsiState = rsi < 30 ? "bullish" : (rsi > 70 ? "bearish" : "neutral");
-
-  // MACD(12,26,9)
-  const macdFast=12, macdSlow=26, macdSignal=9;
-  const emaFast = emaFull(closes, macdFast);
-  const emaSlow = emaFull(closes, macdSlow);
-  // crude signal line: compute last macd series approx by using last 60 points
-  const macdSeries = [];
-  for (let i=Math.max(macdSlow, closes.length-60); i<closes.length; i++){
-    const sub = closes.slice(0, i+1);
-    const ef = emaFull(sub, macdFast);
-    const es = emaFull(sub, macdSlow);
-    if (ef!=null && es!=null) macdSeries.push(ef-es);
-  }
-  const macdLine = (emaFast!=null && emaSlow!=null) ? (emaFast-emaSlow) : null;
-  const signalLine = macdSeries.length >= macdSignal ? emaFull(macdSeries, macdSignal) : null;
-  const macdState = (macdLine!=null && signalLine!=null) ? (macdLine > signalLine ? "bullish":"bearish") : "neutral";
-
-  // Bollinger(20,2.5)
-  const bbPeriod=20, bbMult=2.5;
-  const bbBasis = sma(closes, bbPeriod);
-  const bbStd = stdev(closes, bbPeriod);
-  const bbUpper = (bbBasis!=null && bbStd!=null) ? bbBasis + bbStd*bbMult : null;
-  const bbLower = (bbBasis!=null && bbStd!=null) ? bbBasis - bbStd*bbMult : null;
-  const lastClose = closes[closes.length-1];
-  let bbState = "neutral";
-  if (bbLower!=null && bbUpper!=null) {
-    if (lastClose < bbLower) bbState = "bearish";
-    else if (lastClose > bbLower && lastClose < bbUpper) bbState = "bullish";
-  }
-
-  // Volume vs 20 SMA
-  const volSma = sma(vols, 20);
-  const lastVol = vols[vols.length-1];
-  const volState = (volSma!=null) ? (lastVol > volSma ? "bullish":"bearish") : "neutral";
-
-  // Price vs 50 SMA
-  const trendSma = sma(closes, 50);
-  const trendState = (trendSma!=null) ? (lastClose > trendSma ? "bullish":"bearish") : "neutral";
-
-  const indicators = { rsiState, macdState, bbState, volState, trendState };
-  let bullish=0, bearish=0;
-  Object.values(indicators).forEach(s => { if (s==="bullish") bullish++; if (s==="bearish") bearish++; });
-  const final = bullish>=3 ? "LONG" : (bearish>=3 ? "HEDGE" : "NEUTRAL");
-  const tone = final==="LONG" ? "good" : (final==="HEDGE" ? "bad" : "neutral");
-  return { final, tone, indicators, rsi, macdLine, signalLine, bbUpper, bbLower, trendSma };
-}
-
-/** =========================
- *  Remote service calling
- *  ========================= */
-async function tryService(serviceBase, ticker) {
-  // Tries common patterns:
-  // 1) GET /api/analyze?ticker=...
-  // 2) GET /analyze?ticker=...
-  // 3) POST /api/analyze {ticker}
-  // 4) POST /analyze {ticker}
-  const candidates = [
-    { method:"GET",  url:`${serviceBase}/api/analyze?ticker=${encodeURIComponent(ticker)}` },
-    { method:"GET",  url:`${serviceBase}/analyze?ticker=${encodeURIComponent(ticker)}` },
-    { method:"POST", url:`${serviceBase}/api/analyze`, body:{ ticker } },
-    { method:"POST", url:`${serviceBase}/analyze`, body:{ ticker } },
+const fetchYahooData = async (symbol, interval = '1d', range = '2y') => {
+  const queryUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=${interval}&range=${range}`;
+  
+  // Define proxies to try in order. 
+  // 1. AllOrigins (Standard)
+  // 2. CorsProxy.io (Fallback)
+  const proxies = [
+    (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+    (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`
   ];
 
-  let lastErr = null;
-  for (const c of candidates) {
+  let lastError = null;
+
+  for (const proxyGenerator of proxies) {
     try {
-      const opts = { method: c.method, headers: {} };
-      if (c.method === "POST") {
-        opts.headers["Content-Type"] = "application/json";
-        opts.body = JSON.stringify(c.body);
+      const proxyUrl = proxyGenerator(queryUrl);
+      const response = await fetch(proxyUrl);
+      
+      if (!response.ok) {
+        throw new Error(`Network response was not ok (Status: ${response.status})`);
       }
-      const res = await fetch(c.url, opts);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const ct = (res.headers.get("content-type")||"").toLowerCase();
-      if (ct.includes("application/json")) return { ok:true, json: await res.json(), via: c.url };
-      // if HTML returned, return text (still useful for debugging)
-      return { ok:true, text: await res.text(), via: c.url };
-    } catch (e) {
-      lastErr = e;
-    }
-  }
-  return { ok:false, error: lastErr?.message || "Service failed" };
-}
-
-/** =========================
- *  Charts
- *  ========================= */
-function initCharts() {
-  const pc = document.getElementById("priceChart").getContext("2d");
-  priceChart = new Chart(pc, {
-    type: "line",
-    data: { labels: [], datasets: [
-      { label:"Price", data: [], borderWidth: 2, pointRadius: 0 },
-      { label:"50 SMA", data: [], borderWidth: 1, pointRadius: 0, borderDash: [5,5] },
-      { label:"Signal LONG", type:"scatter", data: [], pointRadius: 6 },
-      { label:"Signal HEDGE", type:"scatter", data: [], pointRadius: 6 }
-    ]},
-    options: {
-      responsive:true, maintainAspectRatio:false,
-      scales: {
-        x: { type:"time", time:{ unit:"month" }, grid:{ display:false } },
-        y: { grid:{ color:"rgba(148,163,184,0.15)" } }
-      },
-      plugins:{ legend:{ labels:{ color:"#cbd5e1" } } }
-    }
-  });
-
-  const vc = document.getElementById("volChart").getContext("2d");
-  volChart = new Chart(vc, {
-    type: "line",
-    data: { labels: [], datasets: [{ label:"20d Vol (rolling)", data: [], borderWidth: 2, pointRadius: 0 }] },
-    options: {
-      responsive:true, maintainAspectRatio:false,
-      scales: {
-        x: { type:"time", time:{ unit:"month" }, grid:{ display:false } },
-        y: { grid:{ color:"rgba(148,163,184,0.15)" }, ticks:{ callback:(v)=> (v*100).toFixed(2)+"%" } }
-      },
-      plugins:{ legend:{ labels:{ color:"#cbd5e1" } } }
-    }
-  });
-}
-function updateCharts(rows, hedgeFallback, hmmFallback) {
-  const labels = rows.map(r => new Date(r.date));
-  const closes = rows.map(r => r.close);
-
-  // 50 SMA
-  const sma50 = closes.map((_,i)=>{
-    const slice = closes.slice(Math.max(0,i-49), i+1);
-    if (slice.length < 50) return null;
-    return slice.reduce((a,b)=>a+b,0)/slice.length;
-  });
-
-  priceChart.data.labels = labels;
-  priceChart.data.datasets[0].data = closes;
-  priceChart.data.datasets[1].data = sma50;
-
-  // Scatter signals from hedge fallback (only last point)
-  const last = rows[rows.length-1];
-  priceChart.data.datasets[2].data = hedgeFallback?.final==="LONG" ? [{ x: new Date(last.date), y: last.close*0.98 }] : [];
-  priceChart.data.datasets[3].data = hedgeFallback?.final==="HEDGE" ? [{ x: new Date(last.date), y: last.close*1.02 }] : [];
-  priceChart.update();
-
-  // Vol chart from hmm fallback vols aligned to end
-  if (hmmFallback?.vols?.length) {
-    const volLabels = labels.slice(labels.length - hmmFallback.vols.length);
-    volChart.data.labels = volLabels;
-    volChart.data.datasets[0].data = hmmFallback.vols;
-    volChart.update();
-  }
-}
-
-/** =========================
- *  Main run
- *  ========================= */
-document.addEventListener("DOMContentLoaded", () => {
-  initCharts();
-  el("form").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    hideError();
-
-    // reset UI
-    setBadge(decisionBadge, "—");
-    decisionDetail.textContent = "";
-    setBadge(hmmBadge, "—");
-    hmmDetail.textContent = "";
-    setBadge(stageBadge, "—");
-    stageDetail.textContent = "";
-    setBadge(hedgeBadge, "—");
-    hedgeDetail.textContent = "";
-    dataSourceLine.textContent = "Source: —";
-
-    const rawTicker = el("ticker").value;
-    const suffix = el("market").value;
-    const symbol = normalizeSymbol(rawTicker, suffix);
-    if (!symbol) return showError("Please enter a ticker.");
-
-    setLoading(true);
-    try {
-      // 0) Market data
-      const { source, data } = await fetchStockDataWithFallback(symbol);
-      dataSourceLine.textContent = `Source: ${source} (${data.length} pts)`;
-
-      // Stage needs weekly bars; we’ll approximate using daily → weekly downsample by taking every 5th data point.
-      const weekly = data.filter((_,i)=> i % 5 === 0);
-      const weeklyWithSMA = calculateSMA(weekly, 30);
-      const cur = weeklyWithSMA[weeklyWithSMA.length-1];
-      const prev4 = weeklyWithSMA[weeklyWithSMA.length-5];
-
-      const stage = analyzeStage(cur.close, cur.sma, prev4?.sma);
-      setBadge(stageBadge, stage.label, stage.tone);
-      if (cur?.sma) {
-        const pctFrom = ((cur.close - cur.sma) / cur.sma) * 100;
-        stageDetail.textContent = `Price ${cur.close.toFixed(2)} | 30w SMA ${cur.sma.toFixed(2)} | ${pctFrom.toFixed(2)}% from SMA`;
-      } else {
-        stageDetail.textContent = "Not enough data for 30-week SMA.";
+      
+      const json = await response.json();
+      
+      if (!json.chart || !json.chart.result || json.chart.result.length === 0) {
+        throw new Error(`Symbol '${symbol}' not found or no data returned.`);
+      }
+      
+      const result = json.chart.result[0];
+      const quotes = result.indicators.quote[0];
+      const timestamps = result.timestamp;
+      
+      if (!timestamps || !quotes.close) {
+        throw new Error("Invalid data structure received.");
       }
 
-      // Hedge fallback (local)
-      let hedgeFallback = null;
-      try {
-        hedgeFallback = computeHedgeComposite(data);
-        setBadge(hedgeBadge, hedgeFallback.final, hedgeFallback.tone);
-        hedgeDetail.textContent =
-          `RSI:${hedgeFallback.rsi.toFixed(1)} | MACD:${hedgeFallback.macdLine?.toFixed?.(2) ?? "—"} | TrendSMA:${hedgeFallback.trendSma?.toFixed?.(2) ?? "—"}`;
-      } catch (err) {
-        setBadge(hedgeBadge, "Unavailable", "neutral");
-        hedgeDetail.textContent = err.message || "Hedge fallback failed.";
-      }
-
-      // HMM fallback (local)
-      let hmmFallback = null;
-      try {
-        const proc = processReturns(data);
-        hmmFallback = determineRegimeFallback(proc);
-        setBadge(hmmBadge, hmmFallback.name, hmmFallback.tone);
-        hmmDetail.textContent = `Vol:${(hmmFallback.currentVol*100).toFixed(2)}% | Trend:${hmmFallback.trend}`;
-      } catch (err) {
-        setBadge(hmmBadge, "Unavailable", "neutral");
-        hmmDetail.textContent = err.message || "HMM fallback failed.";
-      }
-
-      // Update charts
-      updateCharts(data, hedgeFallback, hmmFallback);
-
-      // 1) ROC decision (remote)
-      const roc = await tryService(SERVICES.ROC, symbol);
-      if (roc.ok) {
-        // If JSON: try common fields; else show snippet
-        if (roc.json) {
-          const action = roc.json.action || roc.json.signal || roc.json.decision || "OK";
-          const conf = roc.json.confidence != null ? ` (conf ${roc.json.confidence})` : "";
-          setBadge(decisionBadge, String(action).toUpperCase() + conf, String(action).toUpperCase().includes("BUY") ? "good" :
-                                                 String(action).toUpperCase().includes("SELL") ? "bad" : "neutral");
-          decisionDetail.textContent = roc.json.summary || roc.json.details || `via ${roc.via}`;
-        } else {
-          setBadge(decisionBadge, "See service output", "neutral");
-          decisionDetail.textContent = `Non-JSON response via ${roc.via}`;
-        }
-      } else {
-        setBadge(decisionBadge, "Unavailable", "neutral");
-        decisionDetail.textContent = `ROC service failed: ${roc.error}`;
-      }
-
-      // 2) HMM service (remote) – if it returns something better than fallback, overwrite UI
-      const hmmRemote = await tryService(SERVICES.HMM, symbol);
-      if (hmmRemote.ok && hmmRemote.json) {
-        const regime = hmmRemote.json.regime || hmmRemote.json.state || hmmRemote.json.regimeName || "OK";
-        setBadge(hmmBadge, String(regime), "neutral");
-        hmmDetail.textContent = hmmRemote.json.description || hmmRemote.json.summary || `via ${hmmRemote.via}`;
-      }
-
-      // 4) Hedge service (remote) – if it returns something better than fallback, overwrite UI
-      const hedgeRemote = await tryService(SERVICES.HEDGE, symbol);
-      if (hedgeRemote.ok && hedgeRemote.json) {
-        const sig = hedgeRemote.json.signal || hedgeRemote.json.finalSignal || hedgeRemote.json.action || "OK";
-        const tone = String(sig).toUpperCase().includes("HEDGE") ? "bad" : (String(sig).toUpperCase().includes("LONG") ? "good" : "neutral");
-        setBadge(hedgeBadge, String(sig).toUpperCase(), tone);
-        hedgeDetail.textContent = hedgeRemote.json.details || hedgeRemote.json.summary || `via ${hedgeRemote.via}`;
-      }
+      return timestamps.map((ts, index) => ({
+        date: new Date(ts * 1000).toISOString().split('T')[0],
+        close: quotes.close[index],
+        high: quotes.high[index],
+        low: quotes.low[index],
+        open: quotes.open[index],
+        volume: quotes.volume[index]
+      })).filter(d => d.close !== null && d.close !== undefined); // Ensure we don't have bad data points
 
     } catch (err) {
-      showError(err.message || "Run failed.");
+      console.warn(`Proxy attempt failed for ${symbol}:`, err);
+      lastError = err;
+      // Continue to next proxy...
+    }
+  }
+
+  // If we reach here, all proxies failed
+  throw lastError || new Error("Failed to fetch data from all available sources.");
+};
+
+// --- LOGIC ENGINES ---
+
+// 1. Weinstein Stage Analysis Engine
+const analyzeStage = (weeklyData) => {
+  if (!weeklyData || weeklyData.length < 35) return null;
+  
+  const dataWithSMA = calculateSMA(weeklyData, 30);
+  const current = dataWithSMA[dataWithSMA.length - 1];
+  const prev = dataWithSMA[dataWithSMA.length - 2];
+  
+  if (!current || !current.sma) return null;
+
+  const maSlope = (current.sma - prev.sma) / prev.sma;
+  const priceVsMA = (current.close - current.sma) / current.sma;
+  const slopeThreshold = 0.0005;
+
+  let stage = { id: 0, label: "Indeterminate", color: "text-slate-400" };
+
+  if (maSlope > slopeThreshold && priceVsMA > -0.02) {
+    stage = { id: 2, label: "Stage 2: Markup (Uptrend)", color: "text-teal-400", sub: "Buy / Hold" };
+  } else if (maSlope < -slopeThreshold && priceVsMA < 0.02) {
+    stage = { id: 4, label: "Stage 4: Markdown (Downtrend)", color: "text-red-400", sub: "Sell / Short" };
+  } else {
+    if (priceVsMA < 0) {
+      stage = { id: 1, label: "Stage 1: Basing", color: "text-yellow-400", sub: "Accumulate" };
+    } else {
+      stage = { id: 3, label: "Stage 3: Topping", color: "text-orange-400", sub: "Distribute" };
+    }
+  }
+
+  return { result: stage, data: dataWithSMA.slice(-104) }; // Return last 2 years
+};
+
+// 2. HMM / Regime Engine
+const analyzeRegime = (dailyData) => {
+  if (!dailyData || dailyData.length < 250) return null;
+
+  // Calculate Log Returns
+  const returns = [];
+  for (let i = 1; i < dailyData.length; i++) {
+    const logReturn = Math.log(dailyData[i].close / dailyData[i - 1].close);
+    returns.push(logReturn);
+  }
+
+  // Calculate Rolling Volatility (20-day std dev of returns)
+  const windowSize = 20;
+  const volatilities = [];
+  const chartData = [];
+
+  for (let i = 0; i <= returns.length - windowSize; i++) {
+    const slice = returns.slice(i, i + windowSize);
+    const mean = slice.reduce((a, b) => a + b, 0) / windowSize;
+    const variance = slice.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / windowSize;
+    const stdDev = Math.sqrt(variance);
+    volatilities.push(stdDev);
+    chartData.push({ 
+      date: dailyData[i + windowSize].date, 
+      vol: stdDev,
+      price: dailyData[i + windowSize].close 
+    });
+  }
+
+  const currentVol = volatilities[volatilities.length - 1];
+  const sortedVols = [...volatilities].sort((a, b) => a - b);
+  const lowThresh = sortedVols[Math.floor(sortedVols.length * 0.33)];
+  const highThresh = sortedVols[Math.floor(sortedVols.length * 0.66)];
+
+  let regime = { id: 2, label: "Neutral / Mid Vol", color: "text-yellow-400" };
+  if (currentVol <= lowThresh) regime = { id: 1, label: "Stable / Low Vol", color: "text-teal-400" };
+  if (currentVol >= highThresh) regime = { id: 3, label: "Volatile / High Vol", color: "text-red-400" };
+
+  return { regime, currentVol, lowThresh, highThresh, data: chartData.slice(-250) };
+};
+
+// 3. Signal Engine (5 Factors)
+const analyzeSignals = (dailyData) => {
+  if (!dailyData || dailyData.length < 60) return null;
+
+  // We need multiple indicators
+  // 1. RSI (18)
+  const rsiData = calculateRSI(dailyData, 18);
+  
+  // 2. MACD (12, 26, 9) - simplified for this demo using EMAs
+  const ema12 = calculateEMA(dailyData, 12);
+  const ema26 = calculateEMA(dailyData, 26);
+  // Merge
+  const macdData = ema12.map((item, i) => {
+    const fast = item.ema;
+    const slow = ema26[i]?.ema;
+    return { ...item, macdLine: (fast && slow) ? fast - slow : null };
+  });
+  
+  // 3. Bollinger Bands (20, 2.5)
+  const bbData = calculateStdDev(calculateSMA(dailyData, 20), 20);
+
+  // 4. Volume SMA (20)
+  const volData = calculateSMA(dailyData, 20); // Adds .sma to objects, but logic needs to check volume
+
+  // 5. Trend SMA (50)
+  const trendData = calculateSMA(dailyData, 50);
+
+  // Combine latest slice for decision
+  const idx = dailyData.length - 1;
+  const current = dailyData[idx];
+  
+  const rsiVal = rsiData[idx]?.rsi || 50;
+  // Signal line approx for MACD not calculated fully here to save space, assuming macd > 0 is bullish for simple proxy or check slope
+  const macdVal = macdData[idx]?.macdLine || 0;
+  const macdPrev = macdData[idx-1]?.macdLine || 0;
+  const macdBullish = macdVal > macdPrev; // Momentum increasing
+
+  const bbBase = bbData[idx]?.sma || current.close;
+  const bbDev = bbData[idx]?.stdDev || 0;
+  const bbLower = bbBase - (bbDev * 2.5);
+  // const bbUpper = bbBase + (bbDev * 2.5);
+
+  const volAvg = calculateSMA(dailyData.map(d => ({close: d.volume})), 20)[idx]?.sma || 0;
+  const trendAvg = trendData[idx]?.sma || current.close;
+
+  // Scoring
+  let score = 0;
+  // RSI
+  if (rsiVal < 30) score += 1; // Bullish oversold
+  else if (rsiVal > 70) score -= 1; // Bearish overbought
+  
+  // MACD
+  if (macdBullish) score += 1; else score -= 1;
+
+  // BB
+  if (current.close > bbLower && current.close < bbBase) score += 0.5; // Mean reversion zone
+
+  // Trend
+  if (current.close > trendAvg) score += 1; else score -= 1;
+
+  // Volume
+  if (current.volume > volAvg && current.close > dailyData[idx-1].close) score += 1;
+
+  let signal = { label: "Neutral", color: "text-slate-400", bg: "bg-slate-800" };
+  if (score >= 2) signal = { label: "BUY / LONG", color: "text-teal-400", bg: "bg-teal-900/20" };
+  if (score <= -2) signal = { label: "HEDGE / SELL", color: "text-red-400", bg: "bg-red-900/20" };
+
+  return { 
+    signal, 
+    score, 
+    details: { rsi: rsiVal, trend: current.close > trendAvg ? 'Bullish' : 'Bearish' },
+    data: rsiData.slice(-100) // For charting RSI
+  };
+};
+
+// --- MAIN COMPONENT ---
+
+export default function AnalysisConsole() {
+  const [ticker, setTicker] = useState('NVDA');
+  const [marketSuffix, setMarketSuffix] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [data, setData] = useState(null);
+
+  const handleSearch = async (e) => {
+    if (e) e.preventDefault();
+    setLoading(true);
+    setError(null);
+    setData(null);
+
+    try {
+      let symbol = ticker.toUpperCase().trim();
+      // Handle suffix logic
+      if (marketSuffix && !symbol.endsWith(marketSuffix)) {
+         symbol = symbol.replace(/\.[A-Z]+$/, '') + marketSuffix;
+      }
+
+      // Parallel Fetch: Daily (for HMM/Signal) and Weekly (for Stage)
+      const [daily, weekly] = await Promise.all([
+        fetchYahooData(symbol, '1d', '2y'), // Last 2 years daily
+        fetchYahooData(symbol, '1wk', '5y') // Last 5 years weekly
+      ]);
+
+      // Run Engines
+      const stageAnalysis = analyzeStage(weekly);
+      const hmmAnalysis = analyzeRegime(daily);
+      const signalAnalysis = analyzeSignals(daily);
+
+      setData({
+        symbol,
+        stage: stageAnalysis,
+        hmm: hmmAnalysis,
+        signal: signalAnalysis,
+        dailyRaw: daily
+      });
+    } catch (err) {
+      console.error(err);
+      setError(err.message || "Failed to fetch data.");
     } finally {
       setLoading(false);
     }
-  });
+  };
 
-  // auto-run once
-  el("runBtn").click();
-});
-</script>
-</body>
-</html>
+  // Run on mount
+  useEffect(() => {
+    handleSearch();
+  }, []);
+
+  // Safe data extraction helpers for the render
+  const safeSignal = data?.signal?.signal || { label: 'N/A', color: 'text-slate-500', bg: 'bg-slate-800' };
+  const safeSignalDetails = data?.signal?.details || { rsi: 0, trend: 'N/A' };
+  const safeSignalData = data?.signal?.data || [];
+  
+  const safeHmmRegime = data?.hmm?.regime || { label: 'N/A', color: 'text-slate-500' };
+  const safeHmmData = data?.hmm?.data || [];
+  const safeHmmVol = data?.hmm?.currentVol ? (data.hmm.currentVol * 100).toFixed(2) : '0.00';
+  const safeHmmThresh = data?.hmm?.highThresh ? (data.hmm.highThresh * 100).toFixed(2) : '0.00';
+
+  const safeStageResult = data?.stage?.result || { label: 'N/A', color: 'text-slate-500', sub: 'N/A' };
+  // FIXED: The data array is a sibling of 'result', not a child.
+  const safeStageData = data?.stage?.data || [];
+  
+  // Safe extraction of latest stage values
+  const lastStageItem = safeStageData.length > 0 ? safeStageData[safeStageData.length - 1] : { close: 0, sma: 0 };
+  const currentStagePrice = lastStageItem.close?.toFixed(2) || '0.00';
+  const currentStageSMA = lastStageItem.sma?.toFixed(2) || '0.00';
+
+  return (
+    <div className="min-h-screen bg-slate-950 text-slate-200 font-sans selection:bg-teal-500/30">
+      
+      {/* Header */}
+      <header className="border-b border-slate-800 bg-slate-900/50 backdrop-blur-md sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-6 py-4 flex flex-col md:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-gradient-to-br from-teal-500 to-cyan-600 rounded-lg shadow-lg shadow-teal-500/20">
+              <Cpu className="w-6 h-6 text-white" />
+            </div>
+            <div>
+              <h1 className="text-xl font-bold text-white tracking-tight">The Flywyl Console</h1>
+              <p className="text-xs text-slate-400 font-mono uppercase tracking-wider">Multi-Model Quantitative Engine</p>
+            </div>
+          </div>
+
+          <form onSubmit={handleSearch} className="flex w-full md:w-auto gap-2">
+            <select 
+              value={marketSuffix}
+              onChange={(e) => setMarketSuffix(e.target.value)}
+              className="bg-slate-900 border border-slate-700 text-sm rounded-lg px-3 focus:ring-2 focus:ring-teal-500 outline-none"
+            >
+              <option value="">US Market</option>
+              <option value=".TO">Canada (TSX)</option>
+              <option value=".V">Canada (TSX-V)</option>
+            </select>
+            <div className="relative flex-grow md:flex-grow-0">
+              <input 
+                type="text" 
+                value={ticker}
+                onChange={(e) => setTicker(e.target.value)}
+                className="w-full md:w-48 bg-slate-900 border border-slate-700 text-white text-sm rounded-lg pl-4 pr-10 py-2.5 focus:ring-2 focus:ring-teal-500 outline-none uppercase font-mono"
+                placeholder="SYMBOL"
+              />
+              <button type="submit" className="absolute right-2 top-2.5 text-slate-400 hover:text-white">
+                <Search className="w-4 h-4" />
+              </button>
+            </div>
+          </form>
+        </div>
+      </header>
+
+      {/* Main Content */}
+      <main className="max-w-7xl mx-auto px-6 py-8">
+        
+        {loading && (
+          <div className="flex flex-col items-center justify-center h-64 space-y-4 animate-pulse">
+            <div className="w-12 h-12 border-4 border-slate-800 border-t-teal-500 rounded-full animate-spin"></div>
+            <p className="text-slate-500 font-mono text-sm">Running Models...</p>
+          </div>
+        )}
+
+        {error && (
+          <div className="bg-red-900/20 border border-red-800 text-red-300 p-6 rounded-xl flex items-center gap-4">
+            <AlertTriangle className="w-6 h-6" />
+            <div>
+              <h3 className="font-bold">Analysis Failed</h3>
+              <p className="text-sm opacity-80">{error}</p>
+            </div>
+          </div>
+        )}
+
+        {data && !loading && (
+          <div className="space-y-6 animate-fade-in-up">
+            
+            {/* 1. Summary Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              
+              {/* Signal Card */}
+              <div className={`p-6 rounded-xl border border-slate-800 ${safeSignal.bg} relative overflow-hidden group`}>
+                <div className="flex justify-between items-start mb-4 relative z-10">
+                  <div className="flex items-center gap-2 text-slate-400 text-xs font-mono uppercase tracking-wider">
+                    <Activity className="w-4 h-4" />
+                    <span>Composite Signal</span>
+                  </div>
+                  <span className={`px-2 py-1 rounded text-xs font-bold ${safeSignal.color} bg-slate-900/50`}>
+                    Score: {data.signal?.score ?? '-'}
+                  </span>
+                </div>
+                <div className={`text-3xl font-bold ${safeSignal.color} mb-1 relative z-10`}>
+                  {safeSignal.label}
+                </div>
+                <div className="text-slate-400 text-sm relative z-10">
+                  RSI: {safeSignalDetails.rsi?.toFixed(0) ?? '--'} • Trend: {safeSignalDetails.trend}
+                </div>
+              </div>
+
+              {/* HMM Card */}
+              <div className="p-6 rounded-xl border border-slate-800 bg-slate-900/40 relative overflow-hidden group">
+                 <div className="absolute top-0 right-0 w-32 h-32 bg-purple-500/5 rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none"></div>
+                <div className="flex justify-between items-start mb-4">
+                  <div className="flex items-center gap-2 text-slate-400 text-xs font-mono uppercase tracking-wider">
+                    <GitBranch className="w-4 h-4" />
+                    <span>Market Regime</span>
+                  </div>
+                </div>
+                <div className={`text-3xl font-bold ${safeHmmRegime.color} mb-1`}>
+                  {safeHmmRegime.label}
+                </div>
+                <div className="text-slate-400 text-sm">
+                   Vol: {safeHmmVol}%
+                   <span className="mx-2 text-slate-700">|</span>
+                   Thresh: {safeHmmThresh}%
+                </div>
+              </div>
+
+              {/* Stage Card */}
+              <div className="p-6 rounded-xl border border-slate-800 bg-slate-900/40 relative overflow-hidden group">
+                <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/5 rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none"></div>
+                <div className="flex justify-between items-start mb-4">
+                  <div className="flex items-center gap-2 text-slate-400 text-xs font-mono uppercase tracking-wider">
+                    <Layers className="w-4 h-4" />
+                    <span>Weinstein Stage</span>
+                  </div>
+                  <span className="text-xs text-slate-500">Weekly</span>
+                </div>
+                <div className={`text-3xl font-bold ${safeStageResult.color} mb-1`}>
+                  {safeStageResult.label ? safeStageResult.label.split(':')[0] : 'N/A'}
+                </div>
+                <div className="text-slate-400 text-sm">
+                  {safeStageResult.sub}
+                </div>
+              </div>
+
+            </div>
+
+            {/* 2. Detailed Charts Grid */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              
+              {/* Left: Signal / Price Action */}
+              <div className="bg-slate-900/40 border border-slate-800 rounded-xl p-6 h-[400px] flex flex-col">
+                <div className="flex justify-between items-center mb-6">
+                  <h3 className="font-bold text-white flex items-center gap-2">
+                    <TrendingUp className="w-4 h-4 text-teal-400" />
+                    Price Action & Signal
+                  </h3>
+                  <div className="flex gap-2">
+                     <span className="flex items-center gap-1 text-[10px] text-slate-500">
+                        <div className="w-2 h-2 rounded-full bg-teal-400"></div> Price
+                     </span>
+                     <span className="flex items-center gap-1 text-[10px] text-slate-500">
+                        <div className="w-2 h-2 rounded-full bg-purple-500"></div> RSI
+                     </span>
+                  </div>
+                </div>
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={safeSignalData}>
+                    <defs>
+                      <linearGradient id="colorRsi" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#8884d8" stopOpacity={0.3}/>
+                        <stop offset="95%" stopColor="#8884d8" stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                    <XAxis dataKey="date" hide />
+                    <YAxis yAxisId="left" domain={['auto', 'auto']} hide />
+                    <YAxis yAxisId="right" orientation="right" domain={[0, 100]} tick={{fontSize: 10, fill: '#64748b'}} />
+                    <Tooltip 
+                      contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: '#f1f5f9' }}
+                      itemStyle={{ fontSize: '12px' }}
+                    />
+                    <Line yAxisId="left" type="monotone" dataKey="close" stroke="#2dd4bf" strokeWidth={2} dot={false} />
+                    <Area yAxisId="right" type="monotone" dataKey="rsi" stroke="#a855f7" fill="url(#colorRsi)" strokeWidth={1} />
+                    <ReferenceLine yAxisId="right" y={30} stroke="#22c55e" strokeDasharray="3 3" opacity={0.5} />
+                    <ReferenceLine yAxisId="right" y={70} stroke="#ef4444" strokeDasharray="3 3" opacity={0.5} />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </div>
+
+               {/* Right: HMM Volatility Regime */}
+               <div className="bg-slate-900/40 border border-slate-800 rounded-xl p-6 h-[400px] flex flex-col">
+                <div className="flex justify-between items-center mb-6">
+                  <h3 className="font-bold text-white flex items-center gap-2">
+                    <Activity className="w-4 h-4 text-purple-400" />
+                    Volatility Regime (HMM Proxy)
+                  </h3>
+                  <div className="text-[10px] text-slate-500 bg-slate-800 px-2 py-1 rounded">
+                     {safeHmmData.length} Days Lookback
+                  </div>
+                </div>
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={safeHmmData}>
+                    <defs>
+                      <linearGradient id="colorVol" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.3}/>
+                        <stop offset="95%" stopColor="#f59e0b" stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                    <XAxis dataKey="date" hide />
+                    <YAxis tickFormatter={(val) => (val*100).toFixed(1)+'%'} tick={{fontSize: 10, fill: '#64748b'}} />
+                    <Tooltip 
+                      contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: '#f1f5f9' }}
+                      formatter={(val) => (val * 100).toFixed(2) + '%'}
+                      labelStyle={{ color: '#94a3b8' }}
+                    />
+                    <Area type="monotone" dataKey="vol" stroke="#f59e0b" fill="url(#colorVol)" strokeWidth={2} />
+                    {/* Threshold Lines */}
+                    <ReferenceLine y={data.hmm?.lowThresh} stroke="#2dd4bf" strokeDasharray="5 5" label={{ value: "Low Vol", fill: "#2dd4bf", fontSize: 10 }} />
+                    <ReferenceLine y={data.hmm?.highThresh} stroke="#ef4444" strokeDasharray="5 5" label={{ value: "High Vol", fill: "#ef4444", fontSize: 10 }} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+
+            </div>
+
+            {/* 3. Stage Analysis (Full Width) */}
+            <div className="bg-slate-900/40 border border-slate-800 rounded-xl p-6 h-[450px] flex flex-col">
+               <div className="flex justify-between items-center mb-6">
+                  <h3 className="font-bold text-white flex items-center gap-2">
+                    <BarChart2 className="w-4 h-4 text-blue-400" />
+                    Weinstein Stage Analysis (Weekly)
+                  </h3>
+                  <div className="flex gap-4 text-sm">
+                     <span className="text-slate-400">Price: <span className="text-white">${currentStagePrice}</span></span>
+                     <span className="text-slate-400">30-Wk MA: <span className="text-blue-400">${currentStageSMA}</span></span>
+                  </div>
+                </div>
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={safeStageData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                    <XAxis dataKey="date" minTickGap={30} tick={{fontSize: 10, fill: '#64748b'}} />
+                    <YAxis domain={['auto', 'auto']} tick={{fontSize: 10, fill: '#64748b'}} tickFormatter={(val) => `$${val}`} />
+                    <Tooltip 
+                      contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: '#f1f5f9' }}
+                    />
+                    <Area type="monotone" dataKey="close" stroke="#64748b" fill="#1e293b" strokeWidth={2} fillOpacity={0.3} />
+                    <Line type="monotone" dataKey="sma" stroke="#3b82f6" strokeWidth={3} dot={false} />
+                  </ComposedChart>
+                </ResponsiveContainer>
+            </div>
+
+             {/* Footer Info */}
+             <div className="text-center text-slate-500 text-xs font-mono pt-8">
+                <p>Data provided via Yahoo Finance Proxy. Analysis logic derived from Weinstein, Druckenmiller, and HMM methodologies.</p>
+                <p className="mt-2">Disclaimer: For educational purposes only. Not financial advice.</p>
+             </div>
+
+          </div>
+        )}
+
+        {!data && !loading && !error && (
+           <div className="flex flex-col items-center justify-center h-96 text-slate-600">
+              <Search className="w-16 h-16 mb-4 opacity-20" />
+              <p>Enter a ticker symbol to begin analysis.</p>
+           </div>
+        )}
+
+      </main>
+    </div>
+  );
+}
