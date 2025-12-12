@@ -1,0 +1,630 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Quant Pack – Single Flow</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+  <style>
+    body { background:#0f172a; color:#e2e8f0; }
+    .card { background: rgba(30,41,59,0.6); border:1px solid #334155; border-radius: 16px; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    .spinner { border:3px solid rgba(255,255,255,0.15); border-top-color:#60a5fa; border-radius:999px; width:18px; height:18px; animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .badge { display:inline-flex; align-items:center; gap:.5rem; padding:.35rem .6rem; border-radius:999px; font-weight:700; border:1px solid #334155; }
+  </style>
+</head>
+
+<body class="min-h-screen">
+  <div class="max-w-6xl mx-auto p-6 md:p-10">
+    <header class="mb-8">
+      <h1 class="text-3xl font-bold">Quant Pack – Single Flow</h1>
+      <p class="text-slate-400 mt-2">Decision → Regime (HMM) → Stage → Hedge Signal (with data-source fallbacks)</p>
+    </header>
+
+    <div class="card p-5 mb-6">
+      <form id="form" class="flex flex-col md:flex-row gap-3 md:items-end">
+        <div class="flex-1">
+          <label class="text-sm text-slate-300">Ticker</label>
+          <input id="ticker" class="w-full mt-1 bg-slate-900 border border-slate-700 rounded-lg px-4 py-3 uppercase tracking-wider font-semibold"
+                 placeholder="e.g., AAPL, NVDA, SHOP.TO, RY.TO" value="NVDA"/>
+        </div>
+        <div class="w-full md:w-60">
+          <label class="text-sm text-slate-300">Market (optional)</label>
+          <select id="market" class="w-full mt-1 bg-slate-900 border border-slate-700 rounded-lg px-4 py-3 font-semibold">
+            <option value="">Auto</option>
+            <option value=".TO">Canada (TSX) .TO</option>
+            <option value=".V">Canada (TSX-V) .V</option>
+            <option value=".NE">Canada (NEO) .NE</option>
+            <option value=".CN">Canada (CSE) .CN</option>
+          </select>
+        </div>
+        <button id="runBtn" type="submit"
+          class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-6 py-3 rounded-lg flex items-center justify-center gap-2">
+          <span id="runText">Run Full Quant Pack</span>
+          <span id="runSpin" class="spinner hidden"></span>
+        </button>
+      </form>
+
+      <div class="mt-4 text-xs text-slate-400 mono">
+        <div>Data fallback: MarketStack → FMP → Finnhub → AlphaVantage → Yahoo Finance</div>
+        <div id="dataSourceLine">Source: —</div>
+      </div>
+
+      <div id="errorBox" class="hidden mt-4 p-3 rounded-lg border border-red-700 bg-red-900/40 text-red-200 text-sm"></div>
+    </div>
+
+    <!-- Result badges -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+      <div class="card p-4">
+        <div class="text-xs text-slate-400 uppercase font-semibold mb-2">1) Decision (ROC)</div>
+        <div id="decisionBadge" class="badge bg-slate-900/40 text-slate-200">—</div>
+        <div id="decisionDetail" class="text-sm text-slate-300 mt-3"></div>
+      </div>
+
+      <div class="card p-4">
+        <div class="text-xs text-slate-400 uppercase font-semibold mb-2">2) Regime (HMM)</div>
+        <div id="hmmBadge" class="badge bg-slate-900/40 text-slate-200">—</div>
+        <div id="hmmDetail" class="text-sm text-slate-300 mt-3"></div>
+      </div>
+
+      <div class="card p-4">
+        <div class="text-xs text-slate-400 uppercase font-semibold mb-2">3) Stage (Weinstein)</div>
+        <div id="stageBadge" class="badge bg-slate-900/40 text-slate-200">—</div>
+        <div id="stageDetail" class="text-sm text-slate-300 mt-3"></div>
+      </div>
+
+      <div class="card p-4">
+        <div class="text-xs text-slate-400 uppercase font-semibold mb-2">4) Hedge Signal</div>
+        <div id="hedgeBadge" class="badge bg-slate-900/40 text-slate-200">—</div>
+        <div id="hedgeDetail" class="text-sm text-slate-300 mt-3"></div>
+      </div>
+    </div>
+
+    <!-- Charts -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div class="card p-4 lg:col-span-2">
+        <div class="text-sm font-semibold mb-3">Price + 50 SMA + Signals</div>
+        <div class="h-[380px]"><canvas id="priceChart"></canvas></div>
+      </div>
+      <div class="card p-4">
+        <div class="text-sm font-semibold mb-3">Regime Volatility (20d)</div>
+        <div class="h-[380px]"><canvas id="volChart"></canvas></div>
+      </div>
+    </div>
+
+    <footer class="mt-10 text-xs text-slate-500">
+      Educational only. Not financial advice.
+    </footer>
+  </div>
+
+<script>
+/** =========================
+ *  Config (from your spec)
+ *  ========================= */
+const KEYS = {
+  FMP: "zZ5zECyopZEcPtKvkqlb1R52jv2vFusj",
+  FINNHUB: "d22igc9r01qr7ajlkob0d22igc9r01qr7ajlkobg",
+  ALPHAVANTAGE: "JQQUUJQRAX8TLXSM",
+  MARKETSTACK: "adc91e9b5f1decaabf6d74dc20a4416f"
+};
+
+// Your analysis services
+const SERVICES = {
+  ROC: "https://druckenmiller-2nd-order-roc.onrender.com",
+  HMM: "https://hidden-markov-model-for-stocks.onrender.com",
+  STAGE: "https://stage-analyzer.onrender.com",
+  HEDGE: "https://hdgsignal.onrender.com"
+};
+
+// UI handles
+const el = (id) => document.getElementById(id);
+const errorBox = el("errorBox");
+const dataSourceLine = el("dataSourceLine");
+
+const decisionBadge = el("decisionBadge");
+const decisionDetail = el("decisionDetail");
+const hmmBadge = el("hmmBadge");
+const hmmDetail = el("hmmDetail");
+const stageBadge = el("stageBadge");
+const stageDetail = el("stageDetail");
+const hedgeBadge = el("hedgeBadge");
+const hedgeDetail = el("hedgeDetail");
+
+// charts
+let priceChart, volChart;
+
+function setLoading(isLoading) {
+  el("runText").textContent = isLoading ? "Running..." : "Run Full Quant Pack";
+  el("runSpin").classList.toggle("hidden", !isLoading);
+  el("runBtn").disabled = isLoading;
+  el("runBtn").classList.toggle("opacity-60", isLoading);
+}
+function showError(msg) {
+  errorBox.textContent = msg;
+  errorBox.classList.remove("hidden");
+}
+function hideError() {
+  errorBox.classList.add("hidden");
+  errorBox.textContent = "";
+}
+function setBadge(target, text, tone="neutral") {
+  target.textContent = text;
+  target.className = "badge";
+  const base = "border";
+  if (tone === "good") target.classList.add("bg-green-900/30","text-green-300","border-green-700");
+  else if (tone === "bad") target.classList.add("bg-red-900/30","text-red-300","border-red-700");
+  else if (tone === "warn") target.classList.add("bg-yellow-900/30","text-yellow-200","border-yellow-700");
+  else target.classList.add("bg-slate-900/40","text-slate-200","border-slate-700");
+}
+
+/** =========================
+ *  Helpers: ticker/market
+ *  ========================= */
+function normalizeSymbol(rawTicker, marketSuffix) {
+  let sym = (rawTicker || "").trim().toUpperCase();
+  if (!sym) return "";
+  if (marketSuffix && !sym.endsWith(marketSuffix)) {
+    sym = sym.replace(/\.TO$|\.V$|\.CN$|\.NE$/g, "");
+    sym += marketSuffix;
+  }
+  return sym;
+}
+
+/** =========================
+ *  Market data fetch layer
+ *  (taken from PDF patterns)
+ *  ========================= */
+async function fetchMarketstack(ticker) {
+  const url = `https://api.marketstack.com/v1/eod?access_key=${KEYS.MARKETSTACK}&symbols=${encodeURIComponent(ticker)}&limit=260`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Marketstack HTTP ${res.status}`);
+  const json = await res.json();
+  if (!json.data || !json.data.length) throw new Error("Marketstack: no data");
+  return json.data.reverse().map(d => ({ date: d.date.split("T")[0], close: d.close, volume: d.volume ?? null }));
+}
+async function fetchFMP(ticker) {
+  const url = `https://financialmodelingprep.com/api/v3/historical-price-full/${encodeURIComponent(ticker)}?apikey=${KEYS.FMP}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`FMP HTTP ${res.status}`);
+  const json = await res.json();
+  if (!json.historical || !json.historical.length) throw new Error("FMP: no data");
+  const hist = json.historical.slice(0, 260).reverse();
+  return hist.map(d => ({ date: d.date, close: d.close, volume: d.volume ?? null }));
+}
+async function fetchFinnhub(ticker) {
+  // Finnhub candle: count param is supported in some environments; if it fails, throw and fallback.
+  const url = `https://finnhub.io/api/v1/stock/candle?symbol=${encodeURIComponent(ticker)}&resolution=D&count=260&token=${KEYS.FINNHUB}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Finnhub HTTP ${res.status}`);
+  const json = await res.json();
+  if (json.s !== "ok" || !json.c || !json.c.length) throw new Error("Finnhub: no data");
+  return json.c.map((close, i) => ({
+    date: new Date(json.t[i] * 1000).toISOString().split("T")[0],
+    close,
+    volume: (json.v && json.v[i] != null) ? json.v[i] : null
+  }));
+}
+async function fetchAlphaVantage(ticker) {
+  const url = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${encodeURIComponent(ticker)}&apikey=${KEYS.ALPHAVANTAGE}&outputsize=compact`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`AlphaVantage HTTP ${res.status}`);
+  const json = await res.json();
+  const ts = json["Time Series (Daily)"];
+  if (!ts) throw new Error(json["Note"] || "AlphaVantage: no time series (rate limit?)");
+  const dates = Object.keys(ts).sort();
+  const recent = dates.slice(-260);
+  return recent.map(d => ({ date: d, close: parseFloat(ts[d]["4. close"]), volume: parseFloat(ts[d]["5. volume"]) }));
+}
+async function fetchYahoo(ticker) {
+  // NOTE: yahoo chart endpoint needs CORS handling; this uses allorigins as in the PDF’s Stage tool.
+  const queryUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=1y`;
+  const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(queryUrl)}`;
+  const res = await fetch(proxyUrl);
+  if (!res.ok) throw new Error(`Yahoo proxy HTTP ${res.status}`);
+  const json = await res.json();
+  const r = json?.chart?.result?.[0];
+  const quote = r?.indicators?.quote?.[0];
+  if (!r?.timestamp?.length || !quote?.close?.length) throw new Error("Yahoo: incomplete data");
+  return r.timestamp.map((ts, i) => ({
+    date: new Date(ts*1000).toISOString().split("T")[0],
+    close: quote.close[i],
+    volume: quote.volume ? quote.volume[i] : null
+  })).filter(d => d.close != null);
+}
+
+async function fetchStockDataWithFallback(ticker) {
+  const errors = [];
+  try { return { source:"Marketstack", data: await fetchMarketstack(ticker) }; } catch(e){ errors.push(e.message); }
+  try { return { source:"FMP", data: await fetchFMP(ticker) }; } catch(e){ errors.push(e.message); }
+  try { return { source:"Finnhub", data: await fetchFinnhub(ticker) }; } catch(e){ errors.push(e.message); }
+  try { return { source:"AlphaVantage", data: await fetchAlphaVantage(ticker) }; } catch(e){ errors.push(e.message); }
+  try { return { source:"Yahoo Finance", data: await fetchYahoo(ticker) }; } catch(e){ errors.push(e.message); }
+  throw new Error("All data sources failed: " + errors.join(" | "));
+}
+
+/** =========================
+ *  Stage logic (Weinstein)
+ *  (from PDF Stage tool)
+ *  ========================= */
+function calculateSMA(rows, window) {
+  const out = [];
+  for (let i=0;i<rows.length;i++){
+    if (i < window-1) { out.push({ ...rows[i], sma:null }); continue; }
+    const slice = rows.slice(i-window+1, i+1);
+    const sum = slice.reduce((a,c)=>a+(c.close||0),0);
+    out.push({ ...rows[i], sma: sum/window });
+  }
+  return out;
+}
+function analyzeStage(currentPrice, currentMA, prevMA) {
+  if (!currentMA || !prevMA) return { stage:0, label:"Insufficient Data", tone:"neutral" };
+  const maSlope = (currentMA - prevMA) / prevMA;
+  const priceVsMA = (currentPrice - currentMA) / currentMA;
+  const slopeThreshold = 0.0005;
+
+  if (maSlope > slopeThreshold && priceVsMA > -0.02) return { stage:2, label:"Stage 2: Markup (Uptrend)", tone:"good" };
+  if (maSlope < -slopeThreshold && priceVsMA < 0.02) return { stage:4, label:"Stage 4: Markdown (Downtrend)", tone:"bad" };
+  if (priceVsMA < 0) return { stage:1, label:"Stage 1: Basing (Accumulation)", tone:"warn" };
+  return { stage:3, label:"Stage 3: Topping (Distribution)", tone:"warn" };
+}
+
+/** =========================
+ *  HMM-style regime fallback
+ *  (from PDF HMM tool: vol buckets)
+ *  ========================= */
+function processReturns(rows) {
+  const prices = rows.map(r => r.close).filter(v => typeof v === "number" && v > 0);
+  const dates = rows.map(r => r.date);
+  const returns = [];
+  for (let i=1;i<prices.length;i++) returns.push(Math.log(prices[i]/prices[i-1]));
+  return { prices: prices.slice(1), dates: dates.slice(1), returns };
+}
+function determineRegimeFallback(proc) {
+  const returns = proc.returns;
+  const windowSize = 20;
+  const vols = [];
+  for (let i=0;i<=returns.length-windowSize;i++){
+    const slice = returns.slice(i, i+windowSize);
+    const mean = slice.reduce((a,b)=>a+b,0)/windowSize;
+    const variance = slice.reduce((a,b)=>a+Math.pow(b-mean,2),0)/windowSize;
+    vols.push(Math.sqrt(variance));
+  }
+  if (!vols.length) throw new Error("Insufficient data for volatility.");
+  const currentVol = vols[vols.length-1];
+  const currentPrice = proc.prices[proc.prices.length-1];
+  const ma20 = proc.prices.slice(-20).reduce((a,b)=>a+b,0)/20;
+  const trend = currentPrice > ma20 ? "UP" : "DOWN";
+
+  const sorted = [...vols].sort((a,b)=>a-b);
+  const lowT = sorted[Math.floor(sorted.length*0.33)];
+  const highT = sorted[Math.floor(sorted.length*0.66)];
+
+  let regime=2, name="Mid Volatility (State 2)", tone="warn";
+  if (currentVol <= lowT) { regime=1; name="Low Volatility (State 1)"; tone="good"; }
+  else if (currentVol >= highT) { regime=3; name="High Volatility (State 3)"; tone="bad"; }
+
+  return { regime, name, tone, currentVol, lowT, highT, vols, trend };
+}
+
+/** =========================
+ *  Hedge-signal fallback
+ *  (simplified “3-out-of-5”)
+ *  ========================= */
+function sma(arr, n) {
+  if (arr.length < n) return null;
+  const slice = arr.slice(-n);
+  return slice.reduce((a,b)=>a+b,0)/n;
+}
+function stdev(arr, n) {
+  if (arr.length < n) return null;
+  const slice = arr.slice(-n);
+  const m = sma(slice, n);
+  const v = slice.reduce((a,b)=>a+Math.pow(b-m,2),0)/n;
+  return Math.sqrt(v);
+}
+function emaFull(values, period) {
+  if (values.length < period) return null;
+  const k = 2/(period+1);
+  let e = values.slice(0, period).reduce((a,b)=>a+b,0)/period;
+  for (let i=period;i<values.length;i++) e = values[i]*k + e*(1-k);
+  return e;
+}
+function computeHedgeComposite(rows) {
+  const closes = rows.map(r=>r.close).filter(x=>typeof x==="number");
+  const vols = rows.map(r=>r.volume).filter(x=>typeof x==="number");
+  if (closes.length < 60) throw new Error("Need >= 60 data points for hedge composite.");
+
+  // RSI(18)
+  const rsiPeriod = 18;
+  let gain=0, loss=0;
+  for (let i=1;i<rsiPeriod;i++){
+    const ch = closes[i]-closes[i-1];
+    if (ch>0) gain += ch; else loss -= ch;
+  }
+  gain/=rsiPeriod; loss/=rsiPeriod;
+  for (let i=rsiPeriod;i<closes.length;i++){
+    const ch = closes[i]-closes[i-1];
+    const g = ch>0?ch:0;
+    const l = ch<0?-ch:0;
+    gain = (gain*(rsiPeriod-1)+g)/rsiPeriod;
+    loss = (loss*(rsiPeriod-1)+l)/rsiPeriod;
+  }
+  const rs = loss === 0 ? 999 : (gain/loss);
+  const rsi = 100 - (100/(1+rs));
+  const rsiState = rsi < 30 ? "bullish" : (rsi > 70 ? "bearish" : "neutral");
+
+  // MACD(12,26,9)
+  const macdFast=12, macdSlow=26, macdSignal=9;
+  const emaFast = emaFull(closes, macdFast);
+  const emaSlow = emaFull(closes, macdSlow);
+  // crude signal line: compute last macd series approx by using last 60 points
+  const macdSeries = [];
+  for (let i=Math.max(macdSlow, closes.length-60); i<closes.length; i++){
+    const sub = closes.slice(0, i+1);
+    const ef = emaFull(sub, macdFast);
+    const es = emaFull(sub, macdSlow);
+    if (ef!=null && es!=null) macdSeries.push(ef-es);
+  }
+  const macdLine = (emaFast!=null && emaSlow!=null) ? (emaFast-emaSlow) : null;
+  const signalLine = macdSeries.length >= macdSignal ? emaFull(macdSeries, macdSignal) : null;
+  const macdState = (macdLine!=null && signalLine!=null) ? (macdLine > signalLine ? "bullish":"bearish") : "neutral";
+
+  // Bollinger(20,2.5)
+  const bbPeriod=20, bbMult=2.5;
+  const bbBasis = sma(closes, bbPeriod);
+  const bbStd = stdev(closes, bbPeriod);
+  const bbUpper = (bbBasis!=null && bbStd!=null) ? bbBasis + bbStd*bbMult : null;
+  const bbLower = (bbBasis!=null && bbStd!=null) ? bbBasis - bbStd*bbMult : null;
+  const lastClose = closes[closes.length-1];
+  let bbState = "neutral";
+  if (bbLower!=null && bbUpper!=null) {
+    if (lastClose < bbLower) bbState = "bearish";
+    else if (lastClose > bbLower && lastClose < bbUpper) bbState = "bullish";
+  }
+
+  // Volume vs 20 SMA
+  const volSma = sma(vols, 20);
+  const lastVol = vols[vols.length-1];
+  const volState = (volSma!=null) ? (lastVol > volSma ? "bullish":"bearish") : "neutral";
+
+  // Price vs 50 SMA
+  const trendSma = sma(closes, 50);
+  const trendState = (trendSma!=null) ? (lastClose > trendSma ? "bullish":"bearish") : "neutral";
+
+  const indicators = { rsiState, macdState, bbState, volState, trendState };
+  let bullish=0, bearish=0;
+  Object.values(indicators).forEach(s => { if (s==="bullish") bullish++; if (s==="bearish") bearish++; });
+  const final = bullish>=3 ? "LONG" : (bearish>=3 ? "HEDGE" : "NEUTRAL");
+  const tone = final==="LONG" ? "good" : (final==="HEDGE" ? "bad" : "neutral");
+  return { final, tone, indicators, rsi, macdLine, signalLine, bbUpper, bbLower, trendSma };
+}
+
+/** =========================
+ *  Remote service calling
+ *  ========================= */
+async function tryService(serviceBase, ticker) {
+  // Tries common patterns:
+  // 1) GET /api/analyze?ticker=...
+  // 2) GET /analyze?ticker=...
+  // 3) POST /api/analyze {ticker}
+  // 4) POST /analyze {ticker}
+  const candidates = [
+    { method:"GET",  url:`${serviceBase}/api/analyze?ticker=${encodeURIComponent(ticker)}` },
+    { method:"GET",  url:`${serviceBase}/analyze?ticker=${encodeURIComponent(ticker)}` },
+    { method:"POST", url:`${serviceBase}/api/analyze`, body:{ ticker } },
+    { method:"POST", url:`${serviceBase}/analyze`, body:{ ticker } },
+  ];
+
+  let lastErr = null;
+  for (const c of candidates) {
+    try {
+      const opts = { method: c.method, headers: {} };
+      if (c.method === "POST") {
+        opts.headers["Content-Type"] = "application/json";
+        opts.body = JSON.stringify(c.body);
+      }
+      const res = await fetch(c.url, opts);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const ct = (res.headers.get("content-type")||"").toLowerCase();
+      if (ct.includes("application/json")) return { ok:true, json: await res.json(), via: c.url };
+      // if HTML returned, return text (still useful for debugging)
+      return { ok:true, text: await res.text(), via: c.url };
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  return { ok:false, error: lastErr?.message || "Service failed" };
+}
+
+/** =========================
+ *  Charts
+ *  ========================= */
+function initCharts() {
+  const pc = document.getElementById("priceChart").getContext("2d");
+  priceChart = new Chart(pc, {
+    type: "line",
+    data: { labels: [], datasets: [
+      { label:"Price", data: [], borderWidth: 2, pointRadius: 0 },
+      { label:"50 SMA", data: [], borderWidth: 1, pointRadius: 0, borderDash: [5,5] },
+      { label:"Signal LONG", type:"scatter", data: [], pointRadius: 6 },
+      { label:"Signal HEDGE", type:"scatter", data: [], pointRadius: 6 }
+    ]},
+    options: {
+      responsive:true, maintainAspectRatio:false,
+      scales: {
+        x: { type:"time", time:{ unit:"month" }, grid:{ display:false } },
+        y: { grid:{ color:"rgba(148,163,184,0.15)" } }
+      },
+      plugins:{ legend:{ labels:{ color:"#cbd5e1" } } }
+    }
+  });
+
+  const vc = document.getElementById("volChart").getContext("2d");
+  volChart = new Chart(vc, {
+    type: "line",
+    data: { labels: [], datasets: [{ label:"20d Vol (rolling)", data: [], borderWidth: 2, pointRadius: 0 }] },
+    options: {
+      responsive:true, maintainAspectRatio:false,
+      scales: {
+        x: { type:"time", time:{ unit:"month" }, grid:{ display:false } },
+        y: { grid:{ color:"rgba(148,163,184,0.15)" }, ticks:{ callback:(v)=> (v*100).toFixed(2)+"%" } }
+      },
+      plugins:{ legend:{ labels:{ color:"#cbd5e1" } } }
+    }
+  });
+}
+function updateCharts(rows, hedgeFallback, hmmFallback) {
+  const labels = rows.map(r => new Date(r.date));
+  const closes = rows.map(r => r.close);
+
+  // 50 SMA
+  const sma50 = closes.map((_,i)=>{
+    const slice = closes.slice(Math.max(0,i-49), i+1);
+    if (slice.length < 50) return null;
+    return slice.reduce((a,b)=>a+b,0)/slice.length;
+  });
+
+  priceChart.data.labels = labels;
+  priceChart.data.datasets[0].data = closes;
+  priceChart.data.datasets[1].data = sma50;
+
+  // Scatter signals from hedge fallback (only last point)
+  const last = rows[rows.length-1];
+  priceChart.data.datasets[2].data = hedgeFallback?.final==="LONG" ? [{ x: new Date(last.date), y: last.close*0.98 }] : [];
+  priceChart.data.datasets[3].data = hedgeFallback?.final==="HEDGE" ? [{ x: new Date(last.date), y: last.close*1.02 }] : [];
+  priceChart.update();
+
+  // Vol chart from hmm fallback vols aligned to end
+  if (hmmFallback?.vols?.length) {
+    const volLabels = labels.slice(labels.length - hmmFallback.vols.length);
+    volChart.data.labels = volLabels;
+    volChart.data.datasets[0].data = hmmFallback.vols;
+    volChart.update();
+  }
+}
+
+/** =========================
+ *  Main run
+ *  ========================= */
+document.addEventListener("DOMContentLoaded", () => {
+  initCharts();
+  el("form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    hideError();
+
+    // reset UI
+    setBadge(decisionBadge, "—");
+    decisionDetail.textContent = "";
+    setBadge(hmmBadge, "—");
+    hmmDetail.textContent = "";
+    setBadge(stageBadge, "—");
+    stageDetail.textContent = "";
+    setBadge(hedgeBadge, "—");
+    hedgeDetail.textContent = "";
+    dataSourceLine.textContent = "Source: —";
+
+    const rawTicker = el("ticker").value;
+    const suffix = el("market").value;
+    const symbol = normalizeSymbol(rawTicker, suffix);
+    if (!symbol) return showError("Please enter a ticker.");
+
+    setLoading(true);
+    try {
+      // 0) Market data
+      const { source, data } = await fetchStockDataWithFallback(symbol);
+      dataSourceLine.textContent = `Source: ${source} (${data.length} pts)`;
+
+      // Stage needs weekly bars; we’ll approximate using daily → weekly downsample by taking every 5th data point.
+      const weekly = data.filter((_,i)=> i % 5 === 0);
+      const weeklyWithSMA = calculateSMA(weekly, 30);
+      const cur = weeklyWithSMA[weeklyWithSMA.length-1];
+      const prev4 = weeklyWithSMA[weeklyWithSMA.length-5];
+
+      const stage = analyzeStage(cur.close, cur.sma, prev4?.sma);
+      setBadge(stageBadge, stage.label, stage.tone);
+      if (cur?.sma) {
+        const pctFrom = ((cur.close - cur.sma) / cur.sma) * 100;
+        stageDetail.textContent = `Price ${cur.close.toFixed(2)} | 30w SMA ${cur.sma.toFixed(2)} | ${pctFrom.toFixed(2)}% from SMA`;
+      } else {
+        stageDetail.textContent = "Not enough data for 30-week SMA.";
+      }
+
+      // Hedge fallback (local)
+      let hedgeFallback = null;
+      try {
+        hedgeFallback = computeHedgeComposite(data);
+        setBadge(hedgeBadge, hedgeFallback.final, hedgeFallback.tone);
+        hedgeDetail.textContent =
+          `RSI:${hedgeFallback.rsi.toFixed(1)} | MACD:${hedgeFallback.macdLine?.toFixed?.(2) ?? "—"} | TrendSMA:${hedgeFallback.trendSma?.toFixed?.(2) ?? "—"}`;
+      } catch (err) {
+        setBadge(hedgeBadge, "Unavailable", "neutral");
+        hedgeDetail.textContent = err.message || "Hedge fallback failed.";
+      }
+
+      // HMM fallback (local)
+      let hmmFallback = null;
+      try {
+        const proc = processReturns(data);
+        hmmFallback = determineRegimeFallback(proc);
+        setBadge(hmmBadge, hmmFallback.name, hmmFallback.tone);
+        hmmDetail.textContent = `Vol:${(hmmFallback.currentVol*100).toFixed(2)}% | Trend:${hmmFallback.trend}`;
+      } catch (err) {
+        setBadge(hmmBadge, "Unavailable", "neutral");
+        hmmDetail.textContent = err.message || "HMM fallback failed.";
+      }
+
+      // Update charts
+      updateCharts(data, hedgeFallback, hmmFallback);
+
+      // 1) ROC decision (remote)
+      const roc = await tryService(SERVICES.ROC, symbol);
+      if (roc.ok) {
+        // If JSON: try common fields; else show snippet
+        if (roc.json) {
+          const action = roc.json.action || roc.json.signal || roc.json.decision || "OK";
+          const conf = roc.json.confidence != null ? ` (conf ${roc.json.confidence})` : "";
+          setBadge(decisionBadge, String(action).toUpperCase() + conf, String(action).toUpperCase().includes("BUY") ? "good" :
+                                                 String(action).toUpperCase().includes("SELL") ? "bad" : "neutral");
+          decisionDetail.textContent = roc.json.summary || roc.json.details || `via ${roc.via}`;
+        } else {
+          setBadge(decisionBadge, "See service output", "neutral");
+          decisionDetail.textContent = `Non-JSON response via ${roc.via}`;
+        }
+      } else {
+        setBadge(decisionBadge, "Unavailable", "neutral");
+        decisionDetail.textContent = `ROC service failed: ${roc.error}`;
+      }
+
+      // 2) HMM service (remote) – if it returns something better than fallback, overwrite UI
+      const hmmRemote = await tryService(SERVICES.HMM, symbol);
+      if (hmmRemote.ok && hmmRemote.json) {
+        const regime = hmmRemote.json.regime || hmmRemote.json.state || hmmRemote.json.regimeName || "OK";
+        setBadge(hmmBadge, String(regime), "neutral");
+        hmmDetail.textContent = hmmRemote.json.description || hmmRemote.json.summary || `via ${hmmRemote.via}`;
+      }
+
+      // 4) Hedge service (remote) – if it returns something better than fallback, overwrite UI
+      const hedgeRemote = await tryService(SERVICES.HEDGE, symbol);
+      if (hedgeRemote.ok && hedgeRemote.json) {
+        const sig = hedgeRemote.json.signal || hedgeRemote.json.finalSignal || hedgeRemote.json.action || "OK";
+        const tone = String(sig).toUpperCase().includes("HEDGE") ? "bad" : (String(sig).toUpperCase().includes("LONG") ? "good" : "neutral");
+        setBadge(hedgeBadge, String(sig).toUpperCase(), tone);
+        hedgeDetail.textContent = hedgeRemote.json.details || hedgeRemote.json.summary || `via ${hedgeRemote.via}`;
+      }
+
+    } catch (err) {
+      showError(err.message || "Run failed.");
+    } finally {
+      setLoading(false);
+    }
+  });
+
+  // auto-run once
+  el("runBtn").click();
+});
+</script>
+</body>
+</html>
