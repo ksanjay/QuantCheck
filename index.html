@@ -245,11 +245,13 @@ const fetchStockData = async (ticker, region) => {
 
     // 3. AlphaVantage (US Only)
     const fetchAlpha = async () => {
-        const url = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${finalSymbol}&apikey=${API_KEYS.ALPHAVANTAGE}`;
+        // ADDED outputsize=full to ensure we get >100 days (Compact)
+        const url = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${finalSymbol}&apikey=${API_KEYS.ALPHAVANTAGE}&outputsize=full`;
         const res = await fetch(url);
         const json = await res.json();
         const ts = json['Time Series (Daily)'];
         if (!ts) throw new Error('AlphaVantage Failed');
+        // Sort and take last 500 days
         return Object.keys(ts).sort().slice(-500).map(date => ({
             date,
             close: parseFloat(ts[date]['4. close']),
@@ -568,7 +570,7 @@ const App = () => {
                                     <div className="flex justify-between text-sm">
                                         <span className="text-slate-400">Current Slope</span>
                                         <span className={`${data.summary.stage.id === 2 ? 'text-green-400' : 'text-slate-200'} font-mono`}>
-                                            {data.summary.stage.id === 2 ? 'RISING' : data.summary.stage.id === 4 ? 'FALLING' : 'FLAT'}
+                                            {data.summary.stage.id === 2 ? 'RISING' : data.summary.stage.id === 4 ? 'FALLING' : data.summary.stage.id === 0 ? 'N/A' : 'FLAT'}
                                         </span>
                                     </div>
                                     <div className="p-3 bg-slate-900 rounded border border-slate-700 mt-2">
@@ -577,7 +579,7 @@ const App = () => {
                                             {data.summary.stage.id === 4 && "Price is declining below a falling 30-week MA. 'Markdown' phase. Avoid long positions."}
                                             {data.summary.stage.id === 1 && "Price is chopping sideways. Accumulation phase possible. Wait for breakout."}
                                             {data.summary.stage.id === 3 && "Price is topping out. Distribution phase likely. Tighten stops."}
-                                            {data.summary.stage.id === 0 && "Insufficient data to determine stage."}
+                                            {data.summary.stage.id === 0 && "Insufficient data: Weinstein analysis requires at least 30 weeks (~7 months) of price history to calculate the long-term Moving Average."}
                                         </p>
                                     </div>
                                 </div>
