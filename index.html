@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>The Flywyl Analysis Console</title>
+    <title>QuantTerminal | Multi-Strategy Analysis</title>
     
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -12,890 +12,666 @@
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     
-    <!-- Prop Types (Critical dependency for Recharts UMD) -->
-    <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
     <!-- Recharts -->
+    <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
     <script src="https://unpkg.com/recharts@2.10.0/umd/Recharts.js"></script>
     
-    <!-- Babel (for JSX) -->
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
 
     <style>
-        body { background-color: #020617; } /* Slate 950 */
-        /* Custom scrollbar for webkit */
-        ::-webkit-scrollbar { width: 8px; }
+        /* Bloomberg-like Aesthetics */
+        body { 
+            background-color: #000000; 
+            color: #e2e8f0; 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+        .terminal-text { font-family: 'Courier New', Courier, monospace; }
+        .grid-bg { background-image: radial-gradient(#334155 1px, transparent 1px); background-size: 20px 20px; opacity: 0.1; }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: #0f172a; }
-        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
         ::-webkit-scrollbar-thumb:hover { background: #475569; }
+
+        .dashboard-panel {
+            background-color: #111827;
+            border: 1px solid #1f2937;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5);
+        }
+        
+        .loading-bar {
+            height: 2px;
+            width: 100%;
+            background: #1e293b;
+            position: relative;
+            overflow: hidden;
+        }
+        .loading-bar::after {
+            content: '';
+            position: absolute;
+            left: -50%;
+            height: 100%;
+            width: 50%;
+            background: #f97316;
+            animation: load 1.5s infinite ease-in-out;
+        }
+        @keyframes load { 0% { left: -50%; } 100% { left: 100%; } }
     </style>
 </head>
-<body>
-    <div id="root"></div>
+<body class="min-h-screen relative overflow-x-hidden">
 
-    <script type="text/babel">
-        const { useState, useEffect, useMemo } = React;
-        const { 
-            LineChart, Line, BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid, 
-            Tooltip, Legend, ResponsiveContainer, ComposedChart, ReferenceLine, Scatter 
-        } = Recharts;
+<div id="root"></div>
 
-        // --- ICONS ---
-        const IconBase = ({ children, className }) => (
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>{children}</svg>
-        );
-        const Search = ({ className }) => <IconBase className={className}><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></IconBase>;
-        const Activity = ({ className }) => <IconBase className={className}><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></IconBase>;
-        const TrendingUp = ({ className }) => <IconBase className={className}><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></IconBase>;
-        const AlertTriangle = ({ className }) => <IconBase className={className}><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></IconBase>;
-        const Layers = ({ className }) => <IconBase className={className}><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></IconBase>;
-        const BarChart2 = ({ className }) => <IconBase className={className}><line x1="18" x2="18" y1="20" y2="10"/><line x1="12" x2="12" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="14"/></IconBase>;
-        const GitBranch = ({ className }) => <IconBase className={className}><line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></IconBase>;
-        const Cpu = ({ className }) => <IconBase className={className}><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M15 2v2"/><path d="M15 20v2"/><path d="M2 15h2"/><path d="M2 9h2"/><path d="M20 15h2"/><path d="M20 9h2"/><path d="M9 2v2"/><path d="M9 20v2"/></IconBase>;
-        const Target = ({ className }) => <IconBase className={className}><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></IconBase>;
+<script type="text/babel">
 
-        // --- MATH & INDICATOR UTILITIES ---
-        const calculateSMA = (data, window) => {
-            if (!data || data.length < window) return null;
-            const smaData = data.map((item, index) => {
-                if (index < window - 1) return { ...item, sma: null };
-                const slice = data.slice(index - window + 1, index + 1);
-                const sum = slice.reduce((acc, curr) => acc + (curr.close || 0), 0);
-                return { ...item, sma: sum / window };
+const { useState, useEffect, useMemo, useCallback } = React;
+const { 
+    ResponsiveContainer, ComposedChart, Line, Area, Bar, XAxis, YAxis, 
+    CartesianGrid, Tooltip, Legend, ReferenceLine, Scatter 
+} = Recharts;
+
+// --- ICONS ---
+const Icons = {
+    Activity: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>,
+    TrendingUp: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>,
+    AlertTriangle: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>,
+    Search: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+};
+
+// --- KEYS & CONFIG ---
+const API_KEYS = {
+    MARKETSTACK: 'adc91e9b5f1decaabf6d74dc20a4416f',
+    FMP: 'zZ5zECyopZEcPtKvkqlb1R52jv2vFusj', 
+    FINNHUB: 'd22igc9r01qr7ajlkob0d22igc9r01qr7ajlkobg',
+    ALPHAVANTAGE: 'JQQUUJQRAX8TLXSM'
+};
+
+// --- UTILS: MATH & INDICATORS ---
+
+const calculateSMA = (data, window) => {
+    if (!data || data.length < window) return [];
+    let smaData = new Array(data.length).fill(null);
+    for (let i = window - 1; i < data.length; i++) {
+        const slice = data.slice(i - window + 1, i + 1);
+        const sum = slice.reduce((acc, curr) => acc + curr.close, 0);
+        smaData[i] = sum / window;
+    }
+    return smaData;
+};
+
+const calculateEMA = (data, window) => {
+    if (!data || data.length < window) return [];
+    let k = 2 / (window + 1);
+    let emaData = new Array(data.length).fill(null);
+    // Start with SMA
+    const initialSlice = data.slice(0, window);
+    let ema = initialSlice.reduce((acc, curr) => acc + curr.close, 0) / window;
+    emaData[window - 1] = ema;
+    
+    for (let i = window; i < data.length; i++) {
+        ema = (data[i].close * k) + (ema * (1 - k));
+        emaData[i] = ema;
+    }
+    return emaData;
+};
+
+const calculateRSI = (data, period = 14) => {
+    let rsiData = new Array(data.length).fill(null);
+    let gains = 0;
+    let losses = 0;
+
+    for (let i = 1; i < period + 1; i++) {
+        const diff = data[i].close - data[i - 1].close;
+        if (diff >= 0) gains += diff;
+        else losses -= diff;
+    }
+
+    let avgGain = gains / period;
+    let avgLoss = losses / period;
+
+    for (let i = period + 1; i < data.length; i++) {
+        const diff = data[i].close - data[i - 1].close;
+        const currentGain = diff > 0 ? diff : 0;
+        const currentLoss = diff < 0 ? -diff : 0;
+        
+        avgGain = ((avgGain * (period - 1)) + currentGain) / period;
+        avgLoss = ((avgLoss * (period - 1)) + currentLoss) / period;
+        
+        const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+        rsiData[i] = 100 - (100 / (1 + rs));
+    }
+    return rsiData;
+};
+
+const calculateBollingerBands = (data, period = 20, multiplier = 2) => {
+    const smas = calculateSMA(data, period);
+    return data.map((d, i) => {
+        if (!smas[i]) return { upper: null, lower: null, basis: null };
+        
+        const slice = data.slice(i - period + 1, i + 1);
+        const mean = smas[i];
+        const squaredDiffs = slice.map(x => Math.pow(x.close - mean, 2));
+        const variance = squaredDiffs.reduce((acc, val) => acc + val, 0) / period;
+        const stdDev = Math.sqrt(variance);
+        
+        return {
+            basis: mean,
+            upper: mean + (multiplier * stdDev),
+            lower: mean - (multiplier * stdDev)
+        };
+    });
+};
+
+const resampleToWeekly = (dailyData) => {
+    // Assumes dailyData is sorted Oldest -> Newest
+    const weeklyMap = new Map();
+    
+    dailyData.forEach(day => {
+        const date = new Date(day.date);
+        // Get start of week (Sunday) to group
+        const startOfWeek = new Date(date);
+        startOfWeek.setDate(date.getDate() - date.getDay());
+        const key = startOfWeek.toISOString().split('T')[0];
+        
+        if (!weeklyMap.has(key)) {
+            weeklyMap.set(key, { 
+                date: day.date, // Use the actual date of the last available day later
+                open: day.close, 
+                high: day.close, 
+                low: day.close, 
+                close: day.close, 
+                volume: 0,
+                days: [] 
             });
-            return smaData;
-        };
-
-        const calculateEMA = (data, window) => {
-            if (!data || data.length < window) return [];
-            const k = 2 / (window + 1);
-            let emaData = [...data];
-            const firstSMA = data.slice(0, window).reduce((acc, curr) => acc + curr.close, 0) / window;
-            emaData[window - 1] = { ...emaData[window - 1], ema: firstSMA };
-            for (let i = window; i < data.length; i++) {
-                const prevEma = emaData[i - 1].ema !== undefined ? emaData[i - 1].ema : emaData[i - 1].close;
-                const currentEma = (data[i].close * k) + (prevEma * (1 - k));
-                emaData[i] = { ...emaData[i], ema: currentEma };
-            }
-            return emaData;
-        };
-
-        const calculateStdDev = (data, window, key = 'close') => {
-            return data.map((item, index) => {
-                if (index < window - 1) return { ...item, stdDev: null };
-                const slice = data.slice(index - window + 1, index + 1);
-                const mean = slice.reduce((acc, curr) => acc + curr[key], 0) / window;
-                const variance = slice.reduce((acc, curr) => acc + Math.pow(curr[key] - mean, 2), 0) / window;
-                return { ...item, stdDev: Math.sqrt(variance) };
-            });
-        };
-
-        const calculateRSI = (data, window = 14) => {
-            let gains = 0;
-            let losses = 0;
-            const rsiData = [...data];
-            for (let i = 1; i <= window; i++) {
-                const change = data[i].close - data[i - 1].close;
-                if (change > 0) gains += change; else losses += Math.abs(change);
-            }
-            let avgGain = gains / window;
-            let avgLoss = losses / window;
-            for (let i = window + 1; i < data.length; i++) {
-                const change = data[i].close - data[i - 1].close;
-                const gain = change > 0 ? change : 0;
-                const loss = change < 0 ? Math.abs(change) : 0;
-                avgGain = ((avgGain * (window - 1)) + gain) / window;
-                avgLoss = ((avgLoss * (window - 1)) + loss) / window;
-                const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
-                const rsi = 100 - (100 / (1 + rs));
-                rsiData[i] = { ...rsiData[i], rsi };
-            }
-            return rsiData;
-        };
-
-        // --- HMM ALGORITHMS (Ported from PDF) ---
-
-        function kMeans(data, k) {
-            let centroids = data.slice(0, k);
-            let assignments = new Array(data.length).fill(0);
-            let changed = true;
-            let iter = 0;
-
-            while(changed && iter < 20) {
-                changed = false;
-                // Assignment step
-                for(let i=0; i<data.length; i++) {
-                    let minDist = Infinity;
-                    let cluster = 0;
-                    for(let j=0; j<k; j++) {
-                        const dist = Math.sqrt(data[i].reduce((sum, val, dim) => sum + Math.pow(val - centroids[j][dim], 2), 0));
-                        if(dist < minDist) {
-                            minDist = dist;
-                            cluster = j;
-                        }
-                    }
-                    if(assignments[i] !== cluster) {
-                        assignments[i] = cluster;
-                        changed = true;
-                    }
-                }
-                // Update step
-                let sums = Array(k).fill(0).map(() => Array(data[0].length).fill(0));
-                let counts = Array(k).fill(0);
-                for(let i=0; i<data.length; i++) {
-                    const c = assignments[i];
-                    counts[c]++;
-                    for(let dim=0; dim<data[0].length; dim++) {
-                        sums[c][dim] += data[i][dim];
-                    }
-                }
-                for(let j=0; j<k; j++) {
-                    if(counts[j] > 0) {
-                        centroids[j] = sums[j].map(x => x / counts[j]);
-                    }
-                }
-                iter++;
-            }
-            return { centroids, assignments };
         }
+        
+        const week = weeklyMap.get(key);
+        week.high = Math.max(week.high, day.close);
+        week.low = Math.min(week.low, day.close);
+        week.close = day.close; // Updates to latest close in that week
+        week.date = day.date; // Updates to latest date
+        week.volume += day.volume || 0;
+        week.days.push(day);
+    });
+    
+    return Array.from(weeklyMap.values());
+};
 
-        class HMM {
-            constructor(numStates, numSymbols) {
-                this.N = numStates;
-                this.M = numSymbols;
-                this.A = this.initMatrix(this.N, this.N);
-                this.B = this.initMatrix(this.N, this.M);
-                this.Pi = new Array(this.N).fill(1/this.N);
-            }
+// --- DATA FETCHING ---
 
-            initMatrix(rows, cols) {
-                let m = [];
-                for(let i=0; i<rows; i++) {
-                    let row = [];
-                    let sum = 0;
-                    for(let j=0; j<cols; j++) {
-                        let val = Math.random();
-                        row.push(val);
-                        sum += val;
-                    }
-                    m.push(row.map(x => x/sum));
+const fetchStockData = async (ticker, region) => {
+    const symbol = ticker.toUpperCase().trim();
+    let finalSymbol = symbol;
+    
+    // Handle Canada Suffixes
+    if (region === 'CA') {
+        if (!finalSymbol.endsWith('.TO') && !finalSymbol.endsWith('.V') && !finalSymbol.endsWith('.CN') && !finalSymbol.endsWith('.NE')) {
+            finalSymbol += '.TO'; // Default to TSX
+        }
+    }
+
+    // 1. Yahoo Finance Proxy (Primary for Canada, Fallback for US)
+    const fetchYahoo = async () => {
+        const queryUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${finalSymbol}?interval=1d&range=2y`;
+        const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(queryUrl)}`;
+        const res = await fetch(proxyUrl);
+        if (!res.ok) throw new Error('Yahoo Proxy Failed');
+        const json = await res.json();
+        const result = json.chart.result[0];
+        return result.timestamp.map((ts, i) => ({
+            date: new Date(ts * 1000).toISOString().split('T')[0],
+            close: result.indicators.quote[0].close[i],
+            volume: result.indicators.quote[0].volume[i]
+        })).filter(d => d.close !== null);
+    };
+
+    // 2. FMP (US Only)
+    const fetchFMP = async () => {
+        const url = `https://financialmodelingprep.com/api/v3/historical-price-full/${finalSymbol}?apikey=${API_KEYS.FMP}`;
+        const res = await fetch(url);
+        const json = await res.json();
+        if (!json.historical) throw new Error('FMP Failed');
+        return json.historical.slice(0, 500).reverse().map(d => ({
+            date: d.date,
+            close: d.close,
+            volume: d.volume
+        }));
+    };
+
+    // 3. AlphaVantage (US Only)
+    const fetchAlpha = async () => {
+        // ADDED outputsize=full to ensure we get >100 days (Compact)
+        const url = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${finalSymbol}&apikey=${API_KEYS.ALPHAVANTAGE}&outputsize=full`;
+        const res = await fetch(url);
+        const json = await res.json();
+        const ts = json['Time Series (Daily)'];
+        if (!ts) throw new Error('AlphaVantage Failed');
+        // Sort and take last 500 days
+        return Object.keys(ts).sort().slice(-500).map(date => ({
+            date,
+            close: parseFloat(ts[date]['4. close']),
+            volume: parseFloat(ts[date]['5. volume'])
+        }));
+    };
+
+    // Execution Logic
+    let fetchedData = null;
+
+    if (region === 'CA') {
+        try { 
+            fetchedData = await fetchYahoo(); 
+        } catch (e) { 
+             throw new Error(`Failed to fetch Canadian stock ${finalSymbol}.`);
+        }
+    } else {
+        // Cascade for US
+        try { fetchedData = await fetchFMP(); } catch (e1) {
+            console.warn('FMP failed, trying AlphaVantage...');
+            try { fetchedData = await fetchAlpha(); } catch (e2) {
+                console.warn('Alpha failed, trying Yahoo...');
+                try { fetchedData = await fetchYahoo(); } catch (e3) {
+                     throw new Error(`All sources failed for ${finalSymbol}. Check ticker or API limits.`);
                 }
-                return m;
-            }
-
-            train(observations) {
-                const T = observations.length;
-                let iter = 0;
-                let states = observations.map(() => Math.floor(Math.random() * this.N));
-
-                while(iter < 10) {
-                    let newA = Array(this.N).fill(0).map(() => Array(this.N).fill(0));
-                    let newB = Array(this.N).fill(0).map(() => Array(this.M).fill(0));
-                    let stateCounts = Array(this.N).fill(0);
-                    let transCounts = Array(this.N).fill(0);
-
-                    for(let t=0; t<T-1; t++) {
-                        let from = states[t];
-                        let to = states[t+1];
-                        let obs = observations[t];
-                        newA[from][to]++;
-                        transCounts[from]++;
-                        newB[from][obs]++;
-                        stateCounts[from]++;
-                    }
-                    newB[states[T-1]][observations[T-1]]++;
-                    stateCounts[states[T-1]]++;
-
-                    for(let i=0; i<this.N; i++) {
-                        for(let j=0; j<this.N; j++) {
-                            this.A[i][j] = (transCounts[i] === 0) ? 1/this.N : newA[i][j] / transCounts[i];
-                        }
-                        for(let k=0; k<this.M; k++) {
-                            this.B[i][k] = (stateCounts[i] === 0) ? 1/this.M : newB[i][k] / stateCounts[i];
-                        }
-                    }
-
-                    const newStates = this.viterbi(observations);
-                    let changes = 0;
-                    for(let t=0; t<T; t++) { if(states[t] !== newStates[t]) changes++; }
-                    states = newStates;
-                    if(changes === 0) break;
-                    iter++;
-                }
-            }
-
-            viterbi(obs) {
-                const T = obs.length;
-                let delta = Array(T).fill(0).map(() => Array(this.N).fill(0));
-                let psi = Array(T).fill(0).map(() => Array(this.N).fill(0));
-
-                for(let i=0; i<this.N; i++) {
-                    delta[0][i] = Math.log(this.Pi[i]) + Math.log(this.B[i][obs[0]] + 1e-10);
-                }
-
-                for(let t=1; t<T; t++) {
-                    for(let j=0; j<this.N; j++) {
-                        let maxVal = -Infinity;
-                        let maxState = 0;
-                        for(let i=0; i<this.N; i++) {
-                            let val = delta[t-1][i] + Math.log(this.A[i][j] + 1e-10);
-                            if(val > maxVal) { maxVal = val; maxState = i; }
-                        }
-                        delta[t][j] = maxVal + Math.log(this.B[j][obs[t]] + 1e-10);
-                        psi[t][j] = maxState;
-                    }
-                }
-
-                let states = Array(T);
-                let maxVal = -Infinity;
-                for(let i=0; i<this.N; i++) {
-                    if(delta[T-1][i] > maxVal) {
-                        maxVal = delta[T-1][i];
-                        states[T-1] = i;
-                    }
-                }
-                for(let t=T-2; t>=0; t--) {
-                    states[t] = psi[t+1][states[t+1]];
-                }
-                return states;
-            }
-
-            getLastState(obs) {
-                const states = this.viterbi(obs);
-                return states[states.length - 1];
-            }
-
-            predictNextObservation(currentState) {
-                let maxProb = -1;
-                let bestSymbol = 0;
-                for(let k=0; k<this.M; k++) {
-                    let prob = 0;
-                    for(let j=0; j<this.N; j++) {
-                        prob += this.A[currentState][j] * this.B[j][k];
-                    }
-                    if(prob > maxProb) {
-                        maxProb = prob;
-                        bestSymbol = k;
-                    }
-                }
-                return bestSymbol;
             }
         }
+    }
 
-        // --- DATA FETCHING (Robust Proxy) ---
-        const fetchYahooData = async (symbol, interval = '1d', range = '2y') => {
-            const queryUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=${interval}&range=${range}`;
+    return fetchedData;
+};
+
+// --- MAIN APP COMPONENT ---
+
+const App = () => {
+    const [ticker, setTicker] = useState('NVDA');
+    const [region, setRegion] = useState('US');
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState(null);
+    const [data, setData] = useState(null);
+    const [activeTab, setActiveTab] = useState('DASHBOARD');
+
+    const handleSearch = async (e) => {
+        if (e) e.preventDefault();
+        setLoading(true);
+        setError(null);
+        setData(null);
+
+        try {
+            const rawData = await fetchStockData(ticker, region);
+            if (rawData.length < 50) throw new Error("Insufficient historical data");
             
-            const proxies = [
-                (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-                (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`
-            ];
-
-            let lastError = null;
-            for (const proxyGenerator of proxies) {
-                try {
-                    const proxyUrl = proxyGenerator(queryUrl);
-                    const response = await fetch(proxyUrl);
-                    if (!response.ok) throw new Error(`Network response was not ok (Status: ${response.status})`);
-                    
-                    const json = await response.json();
-                    if (!json.chart || !json.chart.result || json.chart.result.length === 0) {
-                        throw new Error(`Symbol '${symbol}' not found or no data returned.`);
-                    }
-                    
-                    const result = json.chart.result[0];
-                    const quotes = result.indicators.quote[0];
-                    const timestamps = result.timestamp;
-                    
-                    if (!timestamps || !quotes.close) throw new Error("Invalid data structure received.");
-
-                    return timestamps.map((ts, index) => ({
-                        date: new Date(ts * 1000).toISOString().split('T')[0],
-                        close: quotes.close[index],
-                        open: quotes.open[index],
-                        high: quotes.high[index],
-                        low: quotes.low[index],
-                        volume: quotes.volume[index]
-                    })).filter(d => d.close !== null && d.close !== undefined);
-                } catch (err) {
-                    console.warn(`Proxy attempt failed for ${symbol}:`, err);
-                    lastError = err;
-                }
+            // --- PROCESS DATA ---
+            
+            // 1. Weinstein Analysis (Weekly Data)
+            const weeklyData = resampleToWeekly(rawData);
+            const weeklySMA30 = calculateSMA(weeklyData, 30);
+            
+            const latestWeekly = weeklyData[weeklyData.length - 1];
+            const prevWeekly = weeklyData[weeklyData.length - 2];
+            const latestSMA = weeklySMA30[weeklySMA30.length - 1];
+            const prevSMA = weeklySMA30[weeklySMA30.length - 2];
+            
+            let stage = { id: 0, label: "Indeterminate", color: "#94a3b8" };
+            if (latestSMA && prevSMA) {
+                const slope = (latestSMA - prevSMA) / prevSMA;
+                const priceVsMA = (latestWeekly.close - latestSMA) / latestSMA;
+                
+                if (slope > 0.0005 && priceVsMA > -0.02) stage = { id: 2, label: "Stage 2: Markup", color: "#4ade80" };
+                else if (slope < -0.0005 && priceVsMA < 0.02) stage = { id: 4, label: "Stage 4: Decline", color: "#f87171" };
+                else if (priceVsMA < 0) stage = { id: 1, label: "Stage 1: Basing", color: "#facc15" };
+                else stage = { id: 3, label: "Stage 3: Topping", color: "#fb923c" };
             }
-            throw lastError || new Error("Failed to fetch data from all available sources.");
-        };
 
-        // --- LOGIC ENGINES ---
-
-        // 1. Weinstein Stage
-        const analyzeStage = (weeklyData) => {
-            if (!weeklyData || weeklyData.length < 35) return null;
-            const dataWithSMA = calculateSMA(weeklyData, 30);
-            const current = dataWithSMA[dataWithSMA.length - 1];
-            const prev = dataWithSMA[dataWithSMA.length - 2];
-            if (!current || !current.sma) return null;
-
-            const maSlope = (current.sma - prev.sma) / prev.sma;
-            const priceVsMA = (current.close - current.sma) / current.sma;
-            const slopeThreshold = 0.0005;
-
-            let stage = { id: 0, label: "Indeterminate", color: "text-slate-400" };
-            if (maSlope > slopeThreshold && priceVsMA > -0.02) {
-                stage = { id: 2, label: "Stage 2: Markup (Uptrend)", color: "text-teal-400", sub: "Buy / Hold" };
-            } else if (maSlope < -slopeThreshold && priceVsMA < 0.02) {
-                stage = { id: 4, label: "Stage 4: Markdown (Downtrend)", color: "text-red-400", sub: "Sell / Short" };
-            } else {
-                if (priceVsMA < 0) {
-                    stage = { id: 1, label: "Stage 1: Basing", color: "text-yellow-400", sub: "Accumulate" };
-                } else {
-                    stage = { id: 3, label: "Stage 3: Topping", color: "text-orange-400", sub: "Distribute" };
-                }
-            }
-            return { result: stage, data: dataWithSMA.slice(-104) };
-        };
-
-        // 2. HMM / Regime (Previous Volatility Logic - kept for Regime Card)
-        const analyzeRegime = (dailyData) => {
-            if (!dailyData || dailyData.length < 250) return null;
+            // 2. HMM / Risk Engine (Daily Data)
             const returns = [];
-            for (let i = 1; i < dailyData.length; i++) {
-                returns.push(Math.log(dailyData[i].close / dailyData[i - 1].close));
-            }
-
-            const windowSize = 20;
+            for(let i=1; i<rawData.length; i++) returns.push(Math.log(rawData[i].close / rawData[i-1].close));
+            
+            const volWindow = 20;
             const volatilities = [];
-            const chartData = [];
-
-            for (let i = 0; i <= returns.length - windowSize; i++) {
-                const slice = returns.slice(i, i + windowSize);
-                const mean = slice.reduce((a, b) => a + b, 0) / windowSize;
-                const variance = slice.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / windowSize;
-                const stdDev = Math.sqrt(variance);
-                volatilities.push(stdDev);
-                chartData.push({ 
-                    date: dailyData[i + windowSize].date, 
-                    vol: stdDev,
-                    price: dailyData[i + windowSize].close 
-                });
+            for(let i=0; i <= returns.length - volWindow; i++) {
+                const slice = returns.slice(i, i+volWindow);
+                const mean = slice.reduce((a,b)=>a+b,0)/volWindow;
+                const variance = slice.reduce((a,b)=>a+Math.pow(b-mean,2),0)/volWindow;
+                volatilities.push(Math.sqrt(variance));
             }
-
-            const currentVol = volatilities[volatilities.length - 1];
-            const sortedVols = [...volatilities].sort((a, b) => a - b);
+            
+            // HMM Percentiles
+            const sortedVols = [...volatilities].sort((a,b)=>a-b);
             const lowThresh = sortedVols[Math.floor(sortedVols.length * 0.33)];
             const highThresh = sortedVols[Math.floor(sortedVols.length * 0.66)];
-
-            let regime = { id: 2, label: "Neutral / Mid Vol", color: "text-yellow-400" };
-            if (currentVol <= lowThresh) regime = { id: 1, label: "Stable / Low Vol", color: "text-teal-400" };
-            if (currentVol >= highThresh) regime = { id: 3, label: "Volatile / High Vol", color: "text-red-400" };
-
-            return { regime, currentVol, lowThresh, highThresh, data: chartData.slice(-250) };
-        };
-
-        // 3. Signal Engine
-        const analyzeSignals = (dailyData) => {
-            if (!dailyData || dailyData.length < 60) return null;
-
-            const rsiData = calculateRSI(dailyData, 18);
-            const ema12 = calculateEMA(dailyData, 12);
-            const ema26 = calculateEMA(dailyData, 26);
-            const macdData = ema12.map((item, i) => {
-                const fast = item.ema;
-                const slow = ema26[i]?.ema;
-                return { ...item, macdLine: (fast && slow) ? fast - slow : null };
-            });
-            const bbData = calculateStdDev(calculateSMA(dailyData, 20), 20);
-            const volData = calculateSMA(dailyData, 20);
-            const trendData = calculateSMA(dailyData, 50);
-
-            const idx = dailyData.length - 1;
-            const current = dailyData[idx];
+            const currentVol = volatilities[volatilities.length - 1];
             
-            const rsiVal = rsiData[idx]?.rsi || 50;
-            const macdVal = macdData[idx]?.macdLine || 0;
-            const macdPrev = macdData[idx-1]?.macdLine || 0;
-            const macdBullish = macdVal > macdPrev;
+            let regime = { id: 2, label: "Mid Volatility", desc: "Transitional", color: "#facc15" };
+            if (currentVol <= lowThresh) regime = { id: 1, label: "Low Volatility", desc: "Stable/Trending", color: "#4ade80" };
+            else if (currentVol >= highThresh) regime = { id: 3, label: "High Volatility", desc: "Erratic/Risk", color: "#f87171" };
 
-            const bbBase = bbData[idx]?.sma || current.close;
-            const bbDev = bbData[idx]?.stdDev || 0;
-            const bbLower = bbBase - (bbDev * 2.5);
+            // 3. Technical Signals (Daily Data)
+            const rsi = calculateRSI(rawData, 14);
+            const macdFast = calculateEMA(rawData, 12);
+            const macdSlow = calculateEMA(rawData, 26);
+            const bb = calculateBollingerBands(rawData, 20, 2.5);
+            const sma50 = calculateSMA(rawData, 50);
+            
+            const lastIdx = rawData.length - 1;
+            const currentRSI = rsi[lastIdx];
+            const currentClose = rawData[lastIdx].close;
+            const currentBB = bb[lastIdx];
+            const currentSMA50 = sma50[lastIdx];
+            const macdVal = macdFast[lastIdx] - macdSlow[lastIdx];
+            
+            // Signal Logic
+            let bulls = 0;
+            let bears = 0;
+            
+            if (currentRSI < 30) bulls++; else if (currentRSI > 70) bears++;
+            if (currentClose > currentSMA50) bulls++; else bears++;
+            if (currentClose < currentBB.lower) bulls++; else if (currentClose > currentBB.upper) bears++;
+            if (macdVal > 0) bulls++; else bears++;
+            
+            let signal = "NEUTRAL";
+            let signalColor = "#94a3b8";
+            if (bulls >= 3) { signal = "STRONG BUY"; signalColor = "#4ade80"; }
+            else if (bears >= 3) { signal = "STRONG SELL"; signalColor = "#f87171"; }
 
-            const volAvg = calculateSMA(dailyData.map(d => ({close: d.volume})), 20)[idx]?.sma || 0;
-            const trendAvg = trendData[idx]?.sma || current.close;
+            // Combine for Charting
+            const chartData = rawData.map((d, i) => ({
+                ...d,
+                sma50: sma50[i],
+                bbUpper: bb[i]?.upper,
+                bbLower: bb[i]?.lower,
+                rsi: rsi[i],
+                macd: macdFast[i] - macdSlow[i]
+            })).slice(-150); // Show last 150 days
 
-            let score = 0;
-            if (rsiVal < 30) score += 1; else if (rsiVal > 70) score -= 1;
-            if (macdBullish) score += 1; else score -= 1;
-            if (current.close > bbLower && current.close < bbBase) score += 0.5;
-            if (current.close > trendAvg) score += 1; else score -= 1;
-            if (current.volume > volAvg && current.close > dailyData[idx-1].close) score += 1;
+            const weinsteinChartData = weeklyData.map((d, i) => ({
+                ...d,
+                sma30: weeklySMA30[i]
+            })).slice(-104); // Last 2 years weeks
 
-            let signal = { label: "Neutral", color: "text-slate-400", bg: "bg-slate-800" };
-            if (score >= 2) signal = { label: "BUY / LONG", color: "text-teal-400", bg: "bg-teal-900/20" };
-            if (score <= -2) signal = { label: "HEDGE / SELL", color: "text-red-400", bg: "bg-red-900/20" };
-
-            return { 
-                signal, 
-                score, 
-                details: { rsi: rsiVal, trend: current.close > trendAvg ? 'Bullish' : 'Bearish' },
-                data: rsiData.slice(-100)
-            };
-        };
-
-        // 4. HMM Price Predictor (Implemented from PDF)
-        const analyzeHMMPrediction = (dailyData) => {
-            if (!dailyData || dailyData.length < 30) return null;
-
-            // 1. Preprocess features: (Close-Open)/Open, (High-Open)/Open, (Open-Low)/Open
-            const features = dailyData.map(d => {
-                const open = d.open === 0 ? 0.01 : d.open;
-                return [
-                    (d.close - d.open) / open,
-                    (d.high - d.open) / open,
-                    (d.open - d.low) / open
-                ];
+            setData({
+                summary: {
+                    price: currentClose,
+                    change: currentClose - rawData[lastIdx-1].close,
+                    pct: (currentClose - rawData[lastIdx-1].close)/rawData[lastIdx-1].close,
+                    volume: rawData[lastIdx].volume,
+                    stage,
+                    regime,
+                    signal,
+                    signalColor,
+                    currentVol,
+                    lowThresh,
+                    highThresh
+                },
+                daily: chartData,
+                weekly: weinsteinChartData
             });
 
-            // 2. Discretize Features (K-Means)
-            const N_SYMBOLS = 20;
-            const N_STATES = 4;
-            const { centroids, assignments } = kMeans(features, N_SYMBOLS);
+        } catch (err) {
+            console.error(err);
+            setError(err.message);
+        } finally {
+            setLoading(false);
+        }
+    };
 
-            // 3. Train HMM
-            const hmm = new HMM(N_STATES, N_SYMBOLS);
-            hmm.train(assignments);
+    // Auto-search on mount
+    useEffect(() => { handleSearch(); }, []);
 
-            // 4. Predict
-            const lastState = hmm.getLastState(assignments);
-            const predictedSymbolIndex = hmm.predictNextObservation(lastState);
-            const predictedVector = centroids[predictedSymbolIndex]; // [fracChange, fracHigh, fracLow]
-            
-            const lastPrice = dailyData[dailyData.length - 1].close;
-            const predFracChange = predictedVector[0];
-            const predictedPrice = lastPrice * (1 + predFracChange);
-
-            return {
-                lastPrice,
-                predictedPrice,
-                change: predictedPrice - lastPrice,
-                pctChange: predFracChange * 100,
-                signal: predictedPrice > lastPrice ? "BULL" : "BEAR"
-            };
-        };
-
-        // --- MAIN COMPONENT ---
-        function AnalysisConsole() {
-            const [ticker, setTicker] = useState('NVDA');
-            const [marketSuffix, setMarketSuffix] = useState('');
-            const [loading, setLoading] = useState(false);
-            const [error, setError] = useState(null);
-            const [data, setData] = useState(null);
-
-            const handleSearch = async (e) => {
-                if (e) e.preventDefault();
-                setLoading(true);
-                setError(null);
-                setData(null);
-
-                try {
-                    let symbol = ticker.toUpperCase().trim();
-                    if (marketSuffix && !symbol.endsWith(marketSuffix)) {
-                        symbol = symbol.replace(/\.[A-Z]+$/, '') + marketSuffix;
-                    }
-
-                    // Parallel Fetch
-                    const [daily, weekly] = await Promise.all([
-                        fetchYahooData(symbol, '1d', '2y'),
-                        fetchYahooData(symbol, '1wk', '5y')
-                    ]);
-
-                    const stageAnalysis = analyzeStage(weekly);
-                    const hmmAnalysis = analyzeRegime(daily);
-                    const signalAnalysis = analyzeSignals(daily);
-                    
-                    // Run the NEW HMM Predictor
-                    const prediction = analyzeHMMPrediction(daily);
-
-                    setData({
-                        symbol,
-                        currentPrice: daily[daily.length-1].close,
-                        stage: stageAnalysis,
-                        hmm: hmmAnalysis,
-                        signal: signalAnalysis,
-                        prediction: prediction,
-                        dailyRaw: daily
-                    });
-                } catch (err) {
-                    console.error(err);
-                    setError(err.message || "Failed to fetch data.");
-                } finally {
-                    setLoading(false);
-                }
-            };
-
-            useEffect(() => {
-                handleSearch();
-            }, []);
-
-            // Safe extraction helpers
-            const currentPriceDisplay = data?.currentPrice ? `$${data.currentPrice.toFixed(2)}` : '---';
-            
-            const safeSignal = data?.signal?.signal || { label: 'N/A', color: 'text-slate-500', bg: 'bg-slate-800' };
-            const safeSignalDetails = data?.signal?.details || { rsi: 0, trend: 'N/A' };
-            const safeSignalData = data?.signal?.data || [];
-            
-            const safeHmmRegime = data?.hmm?.regime || { label: 'N/A', color: 'text-slate-500' };
-            const safeHmmData = data?.hmm?.data || [];
-            const safeHmmVol = data?.hmm?.currentVol ? (data.hmm.currentVol * 100).toFixed(2) : '0.00';
-            const safeHmmThresh = data?.hmm?.highThresh ? (data.hmm.highThresh * 100).toFixed(2) : '0.00';
-
-            const safeStageResult = data?.stage?.result || { label: 'N/A', color: 'text-slate-500', sub: 'N/A' };
-            const safeStageData = data?.stage?.data || []; 
-            const lastStageItem = safeStageData.length > 0 ? safeStageData[safeStageData.length - 1] : { close: 0, sma: 0 };
-            const currentStagePrice = lastStageItem.close?.toFixed(2) || '0.00';
-            const currentStageSMA = lastStageItem.sma?.toFixed(2) || '0.00';
-
-            // Prediction logic extraction
-            const predData = data?.prediction || { predictedPrice: 0, signal: 'NEUTRAL', pctChange: 0 };
-            const predColor = predData.signal === 'BULL' ? 'text-teal-400' : (predData.signal === 'BEAR' ? 'text-red-400' : 'text-slate-400');
-            const predBg = predData.signal === 'BULL' ? 'bg-teal-500/10' : (predData.signal === 'BEAR' ? 'bg-red-500/10' : 'bg-slate-800');
-
-            // --- Construct Chart Data for HMM Forecast ---
-            const predChartData = useMemo(() => {
-                if (!data?.dailyRaw || !data?.prediction) return [];
-                
-                // Get last 30 days
-                const history = data.dailyRaw.slice(-30).map(d => ({
-                    date: d.date,
-                    price: d.close,
-                    forecast: null
-                }));
-
-                // Ensure the last historical point is the anchor for the forecast line
-                const lastPoint = history[history.length - 1];
-                
-                // Add the forecast point (Tomorrow)
-                // We create continuity by having the last point have both values or just adding a new one
-                // To draw a line between today and tomorrow, we need a point for tomorrow.
-                
-                // Add "Forecast" point
-                // Note: Recharts line will break if 'price' is null unless connectNulls is true.
-                // But better to use separate lines.
-                // Line 1: dataKey="price" (History)
-                // Line 2: dataKey="forecast" (Forecast)
-                
-                // Anchor Point: Last history point also starts the forecast line
-                if (lastPoint) {
-                    lastPoint.forecast = lastPoint.price;
-                }
-
-                const forecastPoint = {
-                    date: 'Next',
-                    price: null,
-                    forecast: data.prediction.predictedPrice
-                };
-
-                return [...history, forecastPoint];
-            }, [data]);
-
-
-            return (
-                <div className="min-h-screen bg-slate-950 text-slate-200 font-sans selection:bg-teal-500/30">
-                
-                {/* Header */}
-                <header className="border-b border-slate-800 bg-slate-900/50 backdrop-blur-md sticky top-0 z-50">
-                    <div className="max-w-7xl mx-auto px-6 py-4 flex flex-col md:flex-row items-center justify-between gap-4">
-                    <div className="flex items-center gap-4">
-                        <div className="p-2 bg-gradient-to-br from-teal-500 to-cyan-600 rounded-lg shadow-lg shadow-teal-500/20">
-                        <Cpu className="w-6 h-6 text-white" />
-                        </div>
-                        <div>
-                            <h1 className="text-xl font-bold text-white tracking-tight">The Flywyl Console</h1>
-                            <div className="flex items-center gap-3">
-                                <span className="text-xs text-slate-400 font-mono uppercase tracking-wider">Multi-Model Quantitative Engine</span>
-                                {data && (
-                                    <span className="text-lg font-mono font-bold text-white bg-slate-800 px-3 py-0.5 rounded border border-slate-700 shadow-inner">
-                                        {currentPriceDisplay}
-                                    </span>
-                                )}
-                            </div>
-                        </div>
+    return (
+        <div className="max-w-7xl mx-auto p-2 md:p-6 pb-20">
+            {/* HEADER */}
+            <div className="flex flex-col md:flex-row justify-between items-center mb-8 border-b border-slate-800 pb-6 gap-4">
+                <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-gradient-to-br from-orange-500 to-red-600 rounded flex items-center justify-center text-black font-bold text-xl shadow-lg shadow-orange-900/20">Q</div>
+                    <div>
+                        <h1 className="text-2xl font-bold tracking-tight text-white">QuantTerminal</h1>
+                        <p className="text-xs text-slate-500 terminal-text">V.3.1.0 // BLoomberg-LITE</p>
                     </div>
+                </div>
 
-                    <form onSubmit={handleSearch} className="flex w-full md:w-auto gap-2">
-                        <select 
-                        value={marketSuffix}
-                        onChange={(e) => setMarketSuffix(e.target.value)}
-                        className="bg-slate-900 border border-slate-700 text-sm rounded-lg px-3 focus:ring-2 focus:ring-teal-500 outline-none"
-                        >
-                        <option value="">US Market</option>
-                        <option value=".TO">Canada (TSX)</option>
-                        <option value=".V">Canada (TSX-V)</option>
-                        </select>
-                        <div className="relative flex-grow md:flex-grow-0">
+                <form onSubmit={handleSearch} className="flex gap-2 w-full md:w-auto">
+                    <select 
+                        value={region} 
+                        onChange={e => setRegion(e.target.value)}
+                        className="bg-slate-900 border border-slate-700 text-slate-300 text-sm rounded-lg focus:ring-orange-500 focus:border-orange-500 p-2.5"
+                    >
+                        <option value="US">US Market</option>
+                        <option value="CA">Canada (TSX/V)</option>
+                    </select>
+                    <div className="relative w-full">
                         <input 
                             type="text" 
                             value={ticker}
-                            onChange={(e) => setTicker(e.target.value)}
-                            className="w-full md:w-48 bg-slate-900 border border-slate-700 text-white text-sm rounded-lg pl-4 pr-10 py-2.5 focus:ring-2 focus:ring-teal-500 outline-none uppercase font-mono"
-                            placeholder="SYMBOL"
+                            onChange={e => setTicker(e.target.value)}
+                            className="bg-slate-900 border border-slate-700 text-white text-sm rounded-lg focus:ring-orange-500 focus:border-orange-500 block w-full pl-10 p-2.5 uppercase font-mono" 
+                            placeholder="TICKER"
+                            required
                         />
-                        <button type="submit" className="absolute right-2 top-2.5 text-slate-400 hover:text-white">
-                            <Search className="w-4 h-4" />
-                        </button>
+                        <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-slate-500">
+                            <Icons.Search />
                         </div>
-                    </form>
                     </div>
-                </header>
+                    <button type="submit" className="bg-orange-600 hover:bg-orange-700 text-white font-medium rounded-lg text-sm px-5 py-2.5 focus:ring-4 focus:outline-none focus:ring-orange-900 transition-colors">
+                        GO
+                    </button>
+                </form>
+            </div>
 
-                {/* Main Content */}
-                <main className="max-w-7xl mx-auto px-6 py-8">
+            {loading && <div className="loading-bar mb-8 rounded-full"></div>}
+            
+            {error && (
+                <div className="p-4 mb-4 text-sm text-red-200 rounded-lg bg-red-900/20 border border-red-800 flex items-center gap-2" role="alert">
+                    <Icons.AlertTriangle />
+                    <span className="font-medium">System Alert:</span> {error}
+                </div>
+            )}
+
+            {data && (
+                <div className="animate-fade-in space-y-6">
                     
-                    {loading && (
-                    <div className="flex flex-col items-center justify-center h-64 space-y-4 animate-pulse">
-                        <div className="w-12 h-12 border-4 border-slate-800 border-t-teal-500 rounded-full animate-spin"></div>
-                        <p className="text-slate-500 font-mono text-sm">Running Models...</p>
-                    </div>
-                    )}
+                    {/* TOP SCORECARD */}
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                        {/* Price Card */}
+                        <div className="dashboard-panel p-5 rounded-xl">
+                            <p className="text-xs text-slate-400 font-bold tracking-wider mb-1">ASSET PRICE</p>
+                            <div className="flex items-baseline gap-2">
+                                <span className="text-3xl font-mono text-white font-bold">${data.summary.price.toFixed(2)}</span>
+                                <span className={`text-sm font-mono font-bold ${data.summary.change >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                                    {data.summary.change > 0 ? '+' : ''}{data.summary.pct.toFixed(2)}%
+                                </span>
+                            </div>
+                            <p className="text-xs text-slate-600 mt-2 font-mono">VOL: {new Intl.NumberFormat('en-US', { notation: "compact" }).format(data.summary.volume)}</p>
+                        </div>
 
-                    {error && (
-                    <div className="bg-red-900/20 border border-red-800 text-red-300 p-6 rounded-xl flex items-center gap-4">
-                        <AlertTriangle className="w-6 h-6" />
-                        <div>
-                        <h3 className="font-bold">Analysis Failed</h3>
-                        <p className="text-sm opacity-80">{error}</p>
+                        {/* Weinstein Stage */}
+                        <div className="dashboard-panel p-5 rounded-xl border-l-4" style={{ borderLeftColor: data.summary.stage.color }}>
+                            <p className="text-xs text-slate-400 font-bold tracking-wider mb-1">WEINSTEIN STAGE</p>
+                            <div className="text-xl font-bold text-white mb-1">{data.summary.stage.label}</div>
+                            <p className="text-xs text-slate-500">Based on 30-Week MA Slope & Price Action</p>
+                        </div>
+
+                        {/* Risk Regime */}
+                        <div className="dashboard-panel p-5 rounded-xl border-l-4" style={{ borderLeftColor: data.summary.regime.color }}>
+                            <p className="text-xs text-slate-400 font-bold tracking-wider mb-1">HMM REGIME</p>
+                            <div className="text-xl font-bold text-white mb-1">{data.summary.regime.label}</div>
+                            <div className="w-full bg-slate-800 rounded-full h-1.5 mt-2">
+                                <div className="h-1.5 rounded-full" style={{ width: `${data.summary.currentVol * 1000}%`, backgroundColor: data.summary.regime.color }}></div>
+                            </div>
+                        </div>
+
+                        {/* Signal */}
+                        <div className="dashboard-panel p-5 rounded-xl border-l-4" style={{ borderLeftColor: data.summary.signalColor }}>
+                            <p className="text-xs text-slate-400 font-bold tracking-wider mb-1">COMPOSITE SIGNAL</p>
+                            <div className="text-2xl font-black mb-1" style={{ color: data.summary.signalColor }}>{data.summary.signal}</div>
+                            <p className="text-xs text-slate-500">3-Factor Confirmation</p>
                         </div>
                     </div>
-                    )}
 
-                    {data && !loading && (
-                    <div className="space-y-6 animate-fade-in-up">
+                    {/* MAIN CONTENT GRID */}
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                         
-                        {/* 1. Summary Cards (Now 4) */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                        
-                        {/* Signal Card */}
-                        <div className={`p-6 rounded-xl border border-slate-800 ${safeSignal.bg} relative overflow-hidden group`}>
-                            <div className="flex justify-between items-start mb-4 relative z-10">
-                            <div className="flex items-center gap-2 text-slate-400 text-xs font-mono uppercase tracking-wider">
-                                <Activity className="w-4 h-4" />
-                                <span>Signal</span>
+                        {/* LEFT: MAIN CHART */}
+                        <div className="lg:col-span-2 dashboard-panel rounded-xl p-1 md:p-4 h-[500px] flex flex-col">
+                            <div className="flex justify-between items-center px-4 py-2 border-b border-slate-800 mb-2">
+                                <h3 className="font-bold text-slate-300 flex items-center gap-2">
+                                    <Icons.Activity size={16}/> Price Action & Bands
+                                </h3>
+                                <div className="flex gap-2">
+                                    <button onClick={() => setActiveTab('DASHBOARD')} className={`text-xs px-3 py-1 rounded ${activeTab === 'DASHBOARD' ? 'bg-slate-700 text-white' : 'text-slate-500'}`}>Daily</button>
+                                    <button onClick={() => setActiveTab('WEEKLY')} className={`text-xs px-3 py-1 rounded ${activeTab === 'WEEKLY' ? 'bg-slate-700 text-white' : 'text-slate-500'}`}>Weekly</button>
+                                </div>
                             </div>
-                            <span className={`px-2 py-1 rounded text-xs font-bold ${safeSignal.color} bg-slate-900/50`}>
-                                Score: {data.signal?.score ?? '-'}
-                            </span>
-                            </div>
-                            <div className={`text-2xl font-bold ${safeSignal.color} mb-1 relative z-10 truncate`}>
-                            {safeSignal.label}
-                            </div>
-                            <div className="text-slate-400 text-xs relative z-10">
-                            RSI: {safeSignalDetails.rsi?.toFixed(0) ?? '--'} • Trend: {safeSignalDetails.trend}
-                            </div>
-                        </div>
-
-                        {/* HMM Card */}
-                        <div className="p-6 rounded-xl border border-slate-800 bg-slate-900/40 relative overflow-hidden group">
-                            <div className="absolute top-0 right-0 w-32 h-32 bg-purple-500/5 rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none"></div>
-                            <div className="flex justify-between items-start mb-4">
-                            <div className="flex items-center gap-2 text-slate-400 text-xs font-mono uppercase tracking-wider">
-                                <GitBranch className="w-4 h-4" />
-                                <span>Regime</span>
-                            </div>
-                            </div>
-                            <div className={`text-2xl font-bold ${safeHmmRegime.color} mb-1 truncate`}>
-                            {safeHmmRegime.label}
-                            </div>
-                            <div className="text-slate-400 text-xs">
-                            Vol: {safeHmmVol}% | Thresh: {safeHmmThresh}%
-                            </div>
-                        </div>
-
-                        {/* Stage Card */}
-                        <div className="p-6 rounded-xl border border-slate-800 bg-slate-900/40 relative overflow-hidden group">
-                            <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/5 rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none"></div>
-                            <div className="flex justify-between items-start mb-4">
-                            <div className="flex items-center gap-2 text-slate-400 text-xs font-mono uppercase tracking-wider">
-                                <Layers className="w-4 h-4" />
-                                <span>Stage</span>
-                            </div>
-                            <span className="text-xs text-slate-500">Weekly</span>
-                            </div>
-                            <div className={`text-2xl font-bold ${safeStageResult.color} mb-1 truncate`}>
-                            {safeStageResult.label ? safeStageResult.label.split(':')[0] : 'N/A'}
-                            </div>
-                            <div className="text-slate-400 text-xs truncate">
-                            {safeStageResult.sub}
+                            
+                            <div className="flex-1 w-full min-h-0">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    {activeTab === 'DASHBOARD' ? (
+                                        <ComposedChart data={data.daily}>
+                                            <defs>
+                                                <linearGradient id="colorPrice" x1="0" y1="0" x2="0" y2="1">
+                                                    <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.2}/>
+                                                    <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
+                                                </linearGradient>
+                                            </defs>
+                                            <CartesianGrid stroke="#1e293b" strokeDasharray="3 3" vertical={false} />
+                                            <XAxis dataKey="date" stroke="#475569" tick={{fontSize: 10}} minTickGap={30} />
+                                            <YAxis domain={['auto', 'auto']} stroke="#475569" orientation="right" tick={{fontSize: 10}} tickFormatter={val => `$${val}`} />
+                                            <Tooltip contentStyle={{backgroundColor: '#0f172a', borderColor: '#334155', color: '#f8fafc'}} />
+                                            <Legend verticalAlign="top" height={36}/>
+                                            <Area type="monotone" dataKey="close" stroke="#3b82f6" fill="url(#colorPrice)" name="Price" strokeWidth={2} />
+                                            <Line type="monotone" dataKey="sma50" stroke="#fbbf24" dot={false} strokeWidth={1.5} name="50 SMA" />
+                                            <Line type="monotone" dataKey="bbUpper" stroke="#ef4444" strokeDasharray="3 3" dot={false} strokeWidth={1} name="BB Upper" />
+                                            <Line type="monotone" dataKey="bbLower" stroke="#22c55e" strokeDasharray="3 3" dot={false} strokeWidth={1} name="BB Lower" />
+                                        </ComposedChart>
+                                    ) : (
+                                        <ComposedChart data={data.weekly}>
+                                            <CartesianGrid stroke="#1e293b" strokeDasharray="3 3" vertical={false} />
+                                            <XAxis dataKey="date" stroke="#475569" tick={{fontSize: 10}} minTickGap={30} />
+                                            <YAxis domain={['auto', 'auto']} stroke="#475569" orientation="right" tick={{fontSize: 10}} tickFormatter={val => `$${val}`} />
+                                            <Tooltip contentStyle={{backgroundColor: '#0f172a', borderColor: '#334155', color: '#f8fafc'}} />
+                                            <Legend verticalAlign="top" height={36}/>
+                                            <Line type="monotone" dataKey="close" stroke="#cbd5e1" dot={false} strokeWidth={2} name="Weekly Price" />
+                                            <Line type="monotone" dataKey="sma30" stroke="#f97316" dot={false} strokeWidth={3} name="30-Week MA" />
+                                        </ComposedChart>
+                                    )}
+                                </ResponsiveContainer>
                             </div>
                         </div>
 
-                        {/* HMM Prediction Card (Updated) */}
-                        <div className={`p-6 rounded-xl border border-slate-800 ${predBg} relative overflow-hidden group`}>
-                            <div className="absolute top-0 right-0 w-32 h-32 bg-teal-500/5 rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none"></div>
-                            <div className="flex justify-between items-start mb-4">
-                            <div className="flex items-center gap-2 text-slate-400 text-xs font-mono uppercase tracking-wider">
-                                <Target className="w-4 h-4" />
-                                <span>HMM Forecast</span>
-                            </div>
-                            <span className="text-xs text-slate-500">Next Session</span>
-                            </div>
-                            <div className={`text-2xl font-bold ${predColor} mb-1 truncate`}>
-                            {predData.signal}
-                            </div>
-                            <div className="text-slate-400 text-xs">
-                            Target: <span className="text-white font-mono font-bold">${predData.predictedPrice.toFixed(2)}</span>
-                            <span className={`ml-2 ${predData.pctChange >= 0 ? 'text-teal-400' : 'text-red-400'}`}>
-                                ({predData.pctChange >= 0 ? '+' : ''}{predData.pctChange.toFixed(2)}%)
-                            </span>
-                            </div>
-                        </div>
-
-                        </div>
-
-                        {/* 2. Detailed Charts Grid (2x2) */}
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                        
-                        {/* 2a. Left: Signal / Price Action */}
-                        <div className="bg-slate-900/40 border border-slate-800 rounded-xl p-6 h-[350px] flex flex-col">
-                            <div className="flex justify-between items-center mb-6">
-                            <h3 className="font-bold text-white flex items-center gap-2">
-                                <TrendingUp className="w-4 h-4 text-teal-400" />
-                                Price Action & Signal
-                            </h3>
-                            </div>
-                            <ResponsiveContainer width="100%" height="100%">
-                            <ComposedChart data={safeSignalData}>
-                                <defs>
-                                <linearGradient id="colorRsi" x1="0" y1="0" x2="0" y2="1">
-                                    <stop offset="5%" stopColor="#8884d8" stopOpacity={0.3}/>
-                                    <stop offset="95%" stopColor="#8884d8" stopOpacity={0}/>
-                                </linearGradient>
-                                </defs>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                                <XAxis dataKey="date" hide />
-                                <YAxis yAxisId="left" domain={['auto', 'auto']} hide />
-                                <YAxis yAxisId="right" orientation="right" domain={[0, 100]} tick={{fontSize: 10, fill: '#64748b'}} />
-                                <Tooltip 
-                                contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: '#f1f5f9' }}
-                                itemStyle={{ fontSize: '12px' }}
-                                />
-                                <Line yAxisId="left" type="monotone" dataKey="close" stroke="#2dd4bf" strokeWidth={2} dot={false} />
-                                <Area yAxisId="right" type="monotone" dataKey="rsi" stroke="#a855f7" fill="url(#colorRsi)" strokeWidth={1} />
-                                <ReferenceLine yAxisId="right" y={30} stroke="#22c55e" strokeDasharray="3 3" opacity={0.5} />
-                                <ReferenceLine yAxisId="right" y={70} stroke="#ef4444" strokeDasharray="3 3" opacity={0.5} />
-                            </ComposedChart>
-                            </ResponsiveContainer>
-                        </div>
-
-                        {/* 2b. Right: HMM Volatility Regime */}
-                        <div className="bg-slate-900/40 border border-slate-800 rounded-xl p-6 h-[350px] flex flex-col">
-                            <div className="flex justify-between items-center mb-6">
-                            <h3 className="font-bold text-white flex items-center gap-2">
-                                <Activity className="w-4 h-4 text-purple-400" />
-                                Volatility Regime (HMM Proxy)
-                            </h3>
-                            </div>
-                            <ResponsiveContainer width="100%" height="100%">
-                            <AreaChart data={safeHmmData}>
-                                <defs>
-                                <linearGradient id="colorVol" x1="0" y1="0" x2="0" y2="1">
-                                    <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.3}/>
-                                    <stop offset="95%" stopColor="#f59e0b" stopOpacity={0}/>
-                                </linearGradient>
-                                </defs>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                                <XAxis dataKey="date" hide />
-                                <YAxis tickFormatter={(val) => (val*100).toFixed(1)+'%'} tick={{fontSize: 10, fill: '#64748b'}} />
-                                <Tooltip 
-                                contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: '#f1f5f9' }}
-                                formatter={(val) => (val * 100).toFixed(2) + '%'}
-                                labelStyle={{ color: '#94a3b8' }}
-                                />
-                                <Area type="monotone" dataKey="vol" stroke="#f59e0b" fill="url(#colorVol)" strokeWidth={2} />
-                                <ReferenceLine y={data.hmm?.lowThresh} stroke="#2dd4bf" strokeDasharray="5 5" label={{ value: "Low", fill: "#2dd4bf", fontSize: 10 }} />
-                                <ReferenceLine y={data.hmm?.highThresh} stroke="#ef4444" strokeDasharray="5 5" label={{ value: "High", fill: "#ef4444", fontSize: 10 }} />
-                            </AreaChart>
-                            </ResponsiveContainer>
-                        </div>
-
-                        {/* 2c. Left: Stage Analysis */}
-                        <div className="bg-slate-900/40 border border-slate-800 rounded-xl p-6 h-[350px] flex flex-col">
-                        <div className="flex justify-between items-center mb-6">
-                            <h3 className="font-bold text-white flex items-center gap-2">
-                                <BarChart2 className="w-4 h-4 text-blue-400" />
-                                Weinstein Stage (Weekly)
-                            </h3>
-                            </div>
-                            <ResponsiveContainer width="100%" height="100%">
-                            <ComposedChart data={safeStageData}>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                                <XAxis dataKey="date" minTickGap={30} tick={{fontSize: 10, fill: '#64748b'}} />
-                                <YAxis domain={['auto', 'auto']} tick={{fontSize: 10, fill: '#64748b'}} tickFormatter={(val) => `$${val}`} />
-                                <Tooltip 
-                                contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: '#f1f5f9' }}
-                                />
-                                <Area type="monotone" dataKey="close" stroke="#64748b" fill="#1e293b" strokeWidth={2} fillOpacity={0.3} />
-                                <Line type="monotone" dataKey="sma" stroke="#3b82f6" strokeWidth={3} dot={false} />
-                            </ComposedChart>
-                            </ResponsiveContainer>
-                        </div>
-
-                         {/* 2d. Right: HMM Forecast Chart (Actual) */}
-                         <div className="bg-slate-900/40 border border-slate-800 rounded-xl p-6 h-[350px] flex flex-col">
-                            <div className="flex justify-between items-start mb-6">
-                                <div>
-                                    <h3 className="font-bold text-white flex items-center gap-2">
-                                        <Target className="w-4 h-4 text-teal-400" />
-                                        HMM Forecast Projection
-                                    </h3>
-                                    <div className="text-xs text-slate-400 mt-1 ml-6">
-                                        Projected: <span className="text-white font-mono font-bold text-sm">${predData.predictedPrice.toFixed(2)}</span>
+                        {/* RIGHT: STRATEGY TABS */}
+                        <div className="dashboard-panel rounded-xl p-6 flex flex-col gap-6">
+                            
+                            {/* WEINSTEIN */}
+                            <div>
+                                <h4 className="text-orange-400 font-bold text-sm uppercase mb-3 flex items-center gap-2">
+                                    <div className="w-2 h-2 rounded-full bg-orange-500"></div> Weinstein Analysis
+                                </h4>
+                                <div className="space-y-3">
+                                    <div className="flex justify-between text-sm">
+                                        <span className="text-slate-400">Trend Definition</span>
+                                        <span className="text-white font-mono">30-Week SMA</span>
+                                    </div>
+                                    <div className="flex justify-between text-sm">
+                                        <span className="text-slate-400">Current Slope</span>
+                                        <span className={`${data.summary.stage.id === 2 ? 'text-green-400' : 'text-slate-200'} font-mono`}>
+                                            {data.summary.stage.id === 2 ? 'RISING' : data.summary.stage.id === 4 ? 'FALLING' : data.summary.stage.id === 0 ? 'N/A' : 'FLAT'}
+                                        </span>
+                                    </div>
+                                    <div className="p-3 bg-slate-900 rounded border border-slate-700 mt-2">
+                                        <p className="text-xs text-slate-300 leading-relaxed">
+                                            {data.summary.stage.id === 2 && "Price is advancing above a rising 30-week MA. This is the ideal 'Markup' phase for long positions."}
+                                            {data.summary.stage.id === 4 && "Price is declining below a falling 30-week MA. 'Markdown' phase. Avoid long positions."}
+                                            {data.summary.stage.id === 1 && "Price is chopping sideways. Accumulation phase possible. Wait for breakout."}
+                                            {data.summary.stage.id === 3 && "Price is topping out. Distribution phase likely. Tighten stops."}
+                                            {data.summary.stage.id === 0 && "Insufficient data: Weinstein analysis requires at least 30 weeks (~7 months) of price history to calculate the long-term Moving Average."}
+                                        </p>
                                     </div>
                                 </div>
-                                <div className="text-[10px] bg-slate-800 px-2 py-1 rounded text-slate-400">
-                                    Last 30 Days + Forecast
+                            </div>
+
+                            <div className="h-px bg-slate-800"></div>
+
+                            {/* HMM RISK */}
+                            <div>
+                                <h4 className="text-blue-400 font-bold text-sm uppercase mb-3 flex items-center gap-2">
+                                    <div className="w-2 h-2 rounded-full bg-blue-500"></div> HMM Risk Engine
+                                </h4>
+                                <div className="space-y-2">
+                                    <div className="flex justify-between text-xs text-slate-500 mb-1">
+                                        <span>Low Vol ({(data.summary.lowThresh*100).toFixed(1)}%)</span>
+                                        <span>High Vol ({(data.summary.highThresh*100).toFixed(1)}%)</span>
+                                    </div>
+                                    <div className="w-full bg-slate-900 rounded h-2 overflow-hidden flex">
+                                        <div style={{width: '33%'}} className="bg-green-900/40 border-r border-slate-800"></div>
+                                        <div style={{width: '33%'}} className="bg-yellow-900/40 border-r border-slate-800"></div>
+                                        <div style={{width: '34%'}} className="bg-red-900/40"></div>
+                                    </div>
+                                    <div className="relative w-full h-4 -mt-3">
+                                        <div 
+                                            className="absolute w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-transparent border-b-[8px] border-b-white transform -translate-x-1/2 transition-all duration-1000"
+                                            style={{ left: `${Math.min(data.summary.currentVol / (data.summary.highThresh * 1.5), 1) * 100}%` }}
+                                        ></div>
+                                    </div>
+                                    <p className="text-xs text-slate-400 mt-2">
+                                        Current Volatility: <span className="text-white font-mono">{(data.summary.currentVol*100).toFixed(2)}%</span>.
+                                        Regime: <span style={{color: data.summary.regime.color}}>{data.summary.regime.label}</span>.
+                                    </p>
                                 </div>
                             </div>
-                            <ResponsiveContainer width="100%" height="100%">
-                            <ComposedChart data={predChartData}>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                                <XAxis dataKey="date" tick={{fontSize: 10, fill: '#64748b'}} minTickGap={30} />
-                                <YAxis domain={['auto', 'auto']} tick={{fontSize: 10, fill: '#64748b'}} tickFormatter={(val) => `$${val}`} />
-                                <Tooltip 
-                                    contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: '#f1f5f9' }}
-                                    formatter={(val) => `$${Number(val).toFixed(2)}`}
-                                    labelStyle={{ color: '#94a3b8' }}
-                                />
-                                <Line type="monotone" dataKey="price" stroke="#2dd4bf" strokeWidth={2} dot={false} name="History" />
-                                {/* Forecast line: dashed, pink/purple */}
-                                <Line type="monotone" dataKey="forecast" stroke="#f472b6" strokeWidth={2} strokeDasharray="5 5" dot={{r: 4}} activeDot={{r: 6}} name="HMM Forecast" />
-                            </ComposedChart>
-                            </ResponsiveContainer>
-                        </div>
 
                         </div>
 
-                        {/* Footer Info */}
-                        <div className="text-center text-slate-500 text-xs font-mono pt-8">
-                            <p>Data provided via Yahoo Finance Proxy. Analysis logic derived from Weinstein, Druckenmiller, and HMM methodologies.</p>
-                            <p className="mt-2">Disclaimer: For educational purposes only. Not financial advice.</p>
+                        {/* BOTTOM: SUB-CHARTS (RSI & MACD) */}
+                        <div className="lg:col-span-3 grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div className="dashboard-panel p-4 rounded-xl h-48">
+                                <h4 className="text-slate-400 text-xs font-bold mb-2">RSI (14) MOMENTUM</h4>
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <ComposedChart data={data.daily}>
+                                        <YAxis domain={[0, 100]} hide />
+                                        <ReferenceLine y={70} stroke="#ef4444" strokeDasharray="3 3" />
+                                        <ReferenceLine y={30} stroke="#22c55e" strokeDasharray="3 3" />
+                                        <Line type="monotone" dataKey="rsi" stroke="#a855f7" strokeWidth={2} dot={false} />
+                                    </ComposedChart>
+                                </ResponsiveContainer>
+                            </div>
+                            <div className="dashboard-panel p-4 rounded-xl h-48">
+                                <h4 className="text-slate-400 text-xs font-bold mb-2">MACD OSCILLATOR</h4>
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <BarChart data={data.daily}>
+                                        <YAxis hide />
+                                        <ReferenceLine y={0} stroke="#475569" />
+                                        <Bar dataKey="macd" fill="#3b82f6">
+                                            {data.daily.map((entry, index) => (
+                                                <Cell key={`cell-${index}`} fill={entry.macd > 0 ? '#4ade80' : '#f87171'} />
+                                            ))}
+                                        </Bar>
+                                    </BarChart>
+                                </ResponsiveContainer>
+                            </div>
                         </div>
 
                     </div>
-                    )}
-
-                    {!data && !loading && !error && (
-                    <div className="flex flex-col items-center justify-center h-96 text-slate-600">
-                        <Search className="w-16 h-16 mb-4 opacity-20" />
-                        <p>Enter a ticker symbol to begin analysis.</p>
-                    </div>
-                    )}
-
-                </main>
                 </div>
-            );
-        }
+            )}
+            
+            <footer className="mt-12 border-t border-slate-800 pt-6 text-center text-slate-600 text-xs">
+                <p>QUANTTERMINAL ANALYTICS ENGINE &bull; RENDER-READY &bull; NO SERVER REQUIRED</p>
+                <p className="mt-2 opacity-50">Data provided by Yahoo Finance Proxy (CA) & FMP/AlphaVantage (US). Not financial advice.</p>
+            </footer>
+        </div>
+    );
+};
 
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<AnalysisConsole />);
-    </script>
+// --- RENDER ---
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
+
+// Helper for Recharts BarChart Cell (needed since we used it above)
+const { BarChart, Cell } = Recharts;
+
+</script>
 </body>
 </html>
